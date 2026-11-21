@@ -1,0 +1,35 @@
+// app.rc — M2GodWin32 sürüm kaynağı
+// NOT: <windows.h> dahil edilmez (llvm-rc ön işlemci arama yolları taşınabilir
+// değil) — RT_MANIFEST'ın sayısal karşılığı (24) doğrudan kullanılır.
+#define RT_MANIFEST_NUM 24
+
+#define VER_MAJOR 2
+#define VER_MINOR 12
+#define VER_PATCH 0
+
+1 VERSIONINFO
+FILEVERSION    VER_MAJOR,VER_MINOR,VER_PATCH,0
+PRODUCTVERSION VER_MAJOR,VER_MINOR,VER_PATCH,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "M2GodWin32 UI Designer (Win32 API)"
+      VALUE "ProductName",     "M2GodWin32"
+      VALUE "FileVersion",     "2.12.0.0"
+      VALUE "ProductVersion",  "2.12.0.0"
+      VALUE "OriginalFilename","M2GodWin32_Faz2.12.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END
+
+// FAZ 2.9: TEMA — comctl32 v6 görsel stiller manifest'i RT_MANIFEST id 2
+// olarak gömülür. id 1 OLMAMALI: loader yalnızca id 1'i başlangıçta otomatik
+// etkinleştirir; biz Modern/Apple temaya geçişte kendimiz CreateActCtxW ile
+// etkinleştiriyoruz (varsayılan = Oldschool klasik Win32 görünümü kalsın).
+2 RT_MANIFEST_NUM "m2god_theme.manifest"

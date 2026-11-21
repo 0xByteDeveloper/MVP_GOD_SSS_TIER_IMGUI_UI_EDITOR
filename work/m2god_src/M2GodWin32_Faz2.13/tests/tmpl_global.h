@@ -1,0 +1,4958 @@
+//  Global.h — M2GodWin32 UI Designer (Faz 2.10) TAM KAPSAMLI nesne kutuphanesi
+//  M2GOD-GLOBAL v2100
+//  !! BU DOSYAYI DUZENLEMEYIN — tasarimci gerektiginde gunceller.
+//  Amac: Form1 olay kodlarinda WinForms benzeri sozdizimi (saf Win32 uzerinde):
+//      timer1->Enabled = false;                  // Timer durdurur
+//      button1->Text = L"Merhaba";
+//      textBox1->ReadOnly = true;
+//      comboBox1->Items->Add(L"Secenek");
+//      checkedListBox1->SetItemChecked(0, true);
+//      progressBar1->Value = 50;
+//      button1->BackColor = M2God::Color::Red;
+//      pictureBox1->Image = M2God::Image::FromFile(L"resim.png");  // PNG/JPG/GIF/BMP
+//      comboBox1->DropDownStyle = M2God::ComboBoxStyle::DropDownList;
+//      if (openFileDialog1->ShowDialog() == M2God::DialogResult::OK) ...
+//  HWND gerekirse: button1->Handle   (ya da dogrudan SendMessage(button1, ...))
+//  Derleme: VS2019 VARSAYILAN ayar (C++14) ile sorunsuz derlenir — /std:c++17
+//  seciliyken de aynen calisir. Ek kutuphane gerekmez (header-only).
+//  Not: proje ayariyla oynamaniza gerek yok — bu dosya C++14 ile uyumludur.
+//  Kapsam: Config_info.json'daki tum toolbox kontrolleri, bilesenler ve
+//          diyaloglar; her kontrol icin tasarimci panelindeki ozellikler.
+// ============================================================================
+#pragma once
+#include <windows.h>
+#include <commctrl.h>
+#include <richedit.h>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <cstdio>
+#include <cwchar>
+#include <string>
+#include <vector>
+#include <map>
+#include <memory>
+#include <functional>
+#include <initializer_list>
+#include <type_traits>
+
+#ifndef LVM_SETVIEW
+#define LVM_SETVIEW (LVM_FIRST + 39)
+#endif
+#ifndef EM_SETBKCOLOR
+#define EM_SETBKCOLOR (WM_USER + 11)
+#endif
+
+namespace M2God {
+
+// ---------------------------------------------------------------------------
+// FAZ 2.13: TEMA — 0=Oldschool (klasik Win32) / 1=Modern (.NET 4.8 WinForms
+// benzeri — CtlPaint modern paleti) / 2=Apple & Mac (KAPSUL Aqua buton + mac
+// checkbox/radio/groupbox + mac alan kenari — bkz. CtlPaint) + M2GOD GRAFIT
+// 4'LUSU (Faz2.5 programindan birebir): 3=Ruby Graphite / 4=Yellow Graphite /
+// 5=Purple Graphite / 6=Dark — 5 durakli gradyan butonlar (normal/hover/
+// basilmis), koyu #252525 zemin, tema renkli baslik gradyani, koyu alanlar.
+// GECIS YERINDE: comctl32 aktivasyon baglami TAMAMEN KALDIRILDI (v5/v6
+// karisik pencere imhasi 2. tema gecisinde cokuyordu) — "Tema" menusunden
+// secilince denetim DERILERI yerinde degisir (CtlPaint::SetThemeAll) ve form
+// zemini yenilenir; HICBIR pencere imha edilmez → cokmez.
+// Secim HKCU\Software\M2GodWin32 altinda hatirlanir (sonraki acilista gecerli).
+// Not: sablon uyesi statikler header'da tanimlanabilir (C++14 uyumlu, ODR
+// guvenli — cok form/proje tek exe'de birlesince tek varlik).
+// GERIYE UYUM: eski uretilmis kod Theme::Modern (bool), Set/Startup/
+// PushOverride(bool) kullanabilir — bool asiri yuklemeler ve Modern uyelik
+// durumu korunur (PushOverride/PopOverride no-op stub).
+// ---------------------------------------------------------------------------
+template <typename TagT>
+struct ThemeT {
+    static const UINT IDOld = 0x7300;   // Oldschool menu komutu
+    static const UINT IDNew = 0x7301;   // Modern menu komutu
+    static const UINT IDMac = 0x7302;   // Apple & Mac menu komutu
+    static const UINT IDRub = 0x7303;   // Ruby Graphite menu komutu   (FAZ 2.13)
+    static const UINT IDYel = 0x7304;   // Yellow Graphite menu komutu  (FAZ 2.13)
+    static const UINT IDPur = 0x7305;   // Purple Graphite menu komutu (FAZ 2.13)
+    static const UINT IDDrk = 0x7306;   // Dark menu komutu             (FAZ 2.13)
+    static int  Cur;                    // su an etkin tema (0..6)
+    static bool Modern;                 // geriye uyum: Cur!=0 (yalniz 0/1 temalar)
+    static bool Recreating;             // geriye uyum: artik kullanilmaz (yerinde gecis)
+    static void SyncLegacy() { Modern = (Cur != 0); }
+public:
+    // M2God grafit mi? (3=Ruby..6=Dark)
+    static bool IsGraphite(int t) { return t >= 3 && t <= 6; }
+    // temanin form zemin rengi (BackColor="Control" cozumu):
+    // mac → #ECECEC, modern/oldschool → #F0F0F0 (WinForms Control),
+    // M2God grafit → #252525 (Faz2.5 CLR_FORM_BACK birebir)
+    static COLORREF BackColorOf(int t) {
+        if (t == 2) return RGB(236, 236, 236);
+        if (IsGraphite(t)) return RGB(37, 37, 37);
+        return RGB(240, 240, 240);
+    }
+    // temayi degistir + kayit defterine yaz — FAZ 2.13: 7 tema
+    static void Set(int t) {
+        if (t < 0 || t > 6) return;
+        if (t == Cur) return;
+        Cur = t; SyncLegacy();
+        Save(t);
+    }
+    // geriye uyum: bool yuklemesi (true=Modern, false=Oldschool)
+    static void Set(bool modern) { Set(modern ? 1 : 0); }
+    // menu komut kimliginden tema kimligi (-1: tema komutu degil)
+    static int IdOfCommand(UINT id) {
+        if (id == IDOld) return 0;
+        if (id == IDNew) return 1;
+        if (id == IDMac) return 2;
+        if (id == IDRub) return 3;
+        if (id == IDYel) return 4;
+        if (id == IDPur) return 5;
+        if (id == IDDrk) return 6;
+        return -1;
+    }
+    // FAZ 2.12: geriye uyum stub'lari — aktivasyon baglami kaldirildi; nesne
+    // ozel tema artik AquaCtl/ModernCtl/GraphiteCtl::Apply ile KILITLI deri
+    // olarak calisir.
+    static bool PushOverride(int) { return false; }
+    static bool PushOverride(bool wantModern) { return PushOverride(wantModern ? 1 : 0); }
+    static void PopOverride() {}
+    // tasarimcinin secmis oldugu varsayilan tema ile baslat;
+    // kayit defterinde kullanici tercihi varsa o gecerli olur
+    static void Startup(int designerTheme) {
+        Cur = (designerTheme >= 0 && designerTheme <= 6) ? designerTheme : 0;
+        HKEY k = NULL;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\M2GodWin32", 0, KEY_READ, &k) == ERROR_SUCCESS) {
+            DWORD v = 0, sz = sizeof(v), typ = 0;
+            if (RegQueryValueExW(k, L"Theme", NULL, &typ, (BYTE*)&v, &sz) == ERROR_SUCCESS && typ == REG_DWORD)
+                Cur = (v <= 6) ? (int)v : 0;
+            RegCloseKey(k);
+        }
+        SyncLegacy();
+    }
+    // geriye uyum: bool yuklemesi
+    static void Startup(bool designerModern) { Startup(designerModern ? 1 : 0); }
+    static void Save(int t) {
+        HKEY k = NULL;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\M2GodWin32", 0, NULL,
+                            REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &k, NULL) == ERROR_SUCCESS) {
+            DWORD v = (DWORD)t;
+            RegSetValueExW(k, L"Theme", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+            RegCloseKey(k);
+        }
+    }
+    static void Save(bool modern) { Save(modern ? 1 : 0); }
+    // "Tema" menusunu form menü barına ekler (InitializeControls sonunda)
+    // — tasarimda MenuStrip varsa SONUNA, yoksa tek basına bir menü bar olur
+    static void AttachMenu(HWND form) {
+        if (!form) return;
+        HMENU mb = GetMenu(form);
+        if (!mb) { mb = CreateMenu(); if (!SetMenu(form, mb)) return; }
+        int cnt = GetMenuItemCount(mb);
+        for (int i = 0; i < cnt; i++) {   // zaten ekliyse tekrar ekleme
+            wchar_t buf[16] = L"";
+            if (GetMenuStringW(mb, (UINT)i, buf, 16, MF_BYPOSITION) && wcscmp(buf, L"Tema") == 0) return;
+        }
+        HMENU tm = CreatePopupMenu();
+        if (!tm) return;
+        AppendMenuW(tm, MF_STRING | (Cur == 6 ? MF_CHECKED : 0), IDDrk, L"Dark (M2God — koyu grafit)");
+        AppendMenuW(tm, MF_STRING | (Cur == 5 ? MF_CHECKED : 0), IDPur, L"Purple Graphite (M2God)");
+        AppendMenuW(tm, MF_STRING | (Cur == 4 ? MF_CHECKED : 0), IDYel, L"Yellow Graphite (M2God)");
+        AppendMenuW(tm, MF_STRING | (Cur == 3 ? MF_CHECKED : 0), IDRub, L"Ruby Graphite (M2God)");
+        AppendMenuW(tm, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(tm, MF_STRING | (Cur == 2 ? MF_CHECKED : 0), IDMac, L"Apple & Mac (Aqua — kapsül buton)");
+        AppendMenuW(tm, MF_STRING | (Cur == 1 ? MF_CHECKED : 0), IDNew, L"Modern (.NET 4.8 / WinForm benzeri)");
+        AppendMenuW(tm, MF_STRING | (Cur == 0 ? MF_CHECKED : 0), IDOld, L"Oldschool (Klasik Win32)");
+        AppendMenuW(mb, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(mb, MF_POPUP, (UINT_PTR)tm, L"Tema");
+        DrawMenuBar(form);
+    }
+};
+struct ThemeTag {};
+typedef ThemeT<ThemeTag> Theme;   // M2God::Theme
+template <typename TagT> int         ThemeT<TagT>::Cur        = 0;
+template <typename TagT> bool        ThemeT<TagT>::Modern     = false;
+template <typename TagT> bool        ThemeT<TagT>::Recreating = false;
+#pragma comment(lib, "Advapi32.lib")   // kayit defteri (VS2019 varsayilan lib'lerinde de var)
+
+// ---------------------------------------------------------------------------
+// FAZ 2.10: APPLE & MAC görünümü — buton sinifi kontroller icin ozel cizim
+// (yusyuvarlak govde, beyaz→gri yumusak gecis, ince kenar, mavi odak halkasi,
+// varsayilan dugme mac mavisi dolgu). Uretilen koda sadece Apple & Mac
+// temali (global ya da nesne ozel) dugmeler icin MacStyle::Apply(...) yazilir.
+// Alt sinifama KOMUTLA yapilir (comctl32 SetWindowSubclass degil): v5/v6
+// karisik sureclerde comctl alt sinif zinciri bozuluyordu (tema gecis
+// cokmesi). Eski proc pencere OZELLIGINDE saklanir (M2OLD_MAC).
+// ---------------------------------------------------------------------------
+namespace MacStyle {
+    inline LRESULT CALLBACK BtnProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+        switch (m) {
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+            RECT rc; GetClientRect(h, &rc);
+            int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+            bool pushed  = (bs & BST_PUSHED) != 0;
+            bool focused = (bs & BST_FOCUS) != 0;
+            bool enabled = IsWindowEnabled(h) != FALSE;
+            bool defBtn  = ((GetWindowLongPtrW(h, GWL_STYLE) & BS_TYPEMASK) == BS_DEFPUSHBUTTON);
+            int len = GetWindowTextLengthW(h);
+            std::wstring txt(len + 1, L'\0');
+            if (len > 0) GetWindowTextW(h, &txt[0], len + 1);
+            txt.resize(len > 0 ? len : 0);
+            int cx = rc.right - rc.left, cy = rc.bottom - rc.top;
+            int rad = cx < cy ? cx / 2 : cy / 2; if (rad < 4) rad = 4; if (rad > 12) rad = 12;
+            COLORREF top, bot, bord, tcol;
+            if (defBtn) {
+                top = pushed ? RGB(3, 100, 210) : RGB(10, 132, 255);
+                bot = pushed ? RGB(2, 92, 196)  : RGB(3, 112, 224);
+                bord = pushed ? RGB(2, 80, 180) : RGB(8, 110, 220);
+                tcol = RGB(255, 255, 255);
+            } else {
+                top = pushed ? RGB(198, 198, 200) : RGB(255, 255, 255);
+                bot = pushed ? RGB(198, 198, 200) : RGB(232, 232, 234);
+                bord = pushed ? RGB(140, 140, 143) : RGB(166, 166, 170);
+                tcol = RGB(29, 29, 31);
+            }
+            if (!enabled) { top = RGB(233, 233, 235); bot = RGB(226, 226, 228); tcol = RGB(168, 168, 173); }
+            int saved = SaveDC(dc);
+            HRGN rgn = CreateRoundRectRgn(rc.left, rc.top, rc.right + 1, rc.bottom + 1, rad * 2, rad * 2);
+            SelectClipRgn(dc, rgn);
+            for (int y = rc.top; y < rc.bottom; y++) {
+                int t = (rc.bottom - rc.top) > 0 ? (y - rc.top) * 1000 / (rc.bottom - rc.top) : 0;
+                int r = GetRValue(top) + (GetRValue(bot) - GetRValue(top)) * t / 1000;
+                int g = GetGValue(top) + (GetGValue(bot) - GetGValue(top)) * t / 1000;
+                int b = GetBValue(top) + (GetBValue(bot) - GetBValue(top)) * t / 1000;
+                HBRUSH br = CreateSolidBrush(RGB(r, g, b));
+                RECT rr = { rc.left, y, rc.right, y + 1 };
+                FillRect(dc, &rr, br);
+                DeleteObject(br);
+            }
+            DeleteObject(rgn);
+            RestoreDC(dc, saved);
+            HPEN pen = CreatePen(PS_SOLID, 1, bord);
+            HPEN op = (HPEN)SelectObject(dc, pen);
+            HBRUSH ob = (HBRUSH)SelectObject(dc, (HBRUSH)GetStockObject(NULL_BRUSH));
+            RoundRect(dc, rc.left, rc.top, rc.right, rc.bottom, rad * 2, rad * 2);
+            SelectObject(dc, op); SelectObject(dc, ob);
+            DeleteObject(pen);
+            if (focused && enabled) {
+                HPEN fp = CreatePen(PS_SOLID, 2, RGB(10, 132, 255));
+                HPEN fop = (HPEN)SelectObject(dc, fp);
+                SelectObject(dc, (HBRUSH)GetStockObject(NULL_BRUSH));
+                RECT ir = rc; InflateRect(&ir, -3, -3);
+                int fr = rad - 2; if (fr < 2) fr = 2;
+                RoundRect(dc, ir.left, ir.top, ir.right, ir.bottom, fr * 2, fr * 2);
+                SelectObject(dc, fop);
+                DeleteObject(fp);
+            }
+            SetBkMode(dc, TRANSPARENT);
+            SetTextColor(dc, tcol);
+            RECT trc = rc;
+            InflateRect(&trc, -(rad / 3) - 2, 0);
+            DrawTextW(dc, txt.c_str(), -1, &trc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            EndPaint(h, &ps);
+            return 0;
+        }
+        case WM_SETFOCUS:
+        case WM_KILLFOCUS:
+        case WM_ENABLE:
+            InvalidateRect(h, NULL, TRUE);
+            break;
+        }
+        WNDPROC old = (WNDPROC)GetPropW(h, L"M2OLD_MAC");
+        return old ? CallWindowProcW(old, h, m, w, l) : DefWindowProcW(h, m, w, l);
+    }
+    // dugmeye mac görünümü uygula (yalin pencere sinifi degismez — sadece cizim)
+    inline void Apply(HWND h) {
+        if (!h || !IsWindow(h)) return;
+        WNDPROC cur = (WNDPROC)GetWindowLongPtrW(h, GWLP_WNDPROC);
+        if (cur == BtnProc) return;
+        SetPropW(h, L"M2OLD_MAC", (HANDLE)cur);
+        SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)BtnProc);
+        InvalidateRect(h, NULL, TRUE);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FAZ 2.10: KONTEYNER KÖPRÜ ALT SINILAMASI — comctl32 SetWindowSubclass
+// yerine saf kullanici32 alt sinifama (v5/v6 karisik sureclerde guvensizdi).
+// Uretilen koddaki ContainerBridgeProc ile beraber kullanilir:
+//     M2God::BridgeSubclass(panel1->Handle);
+// ---------------------------------------------------------------------------
+inline void BridgeSubclass(HWND h) {
+    if (!h || !IsWindow(h)) return;
+    WNDPROC cur = (WNDPROC)GetWindowLongPtrW(h, GWLP_WNDPROC);
+    SetPropW(h, L"M2OLD_BRIDGE", (HANDLE)cur);
+    SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)+[](HWND hh, UINT m, WPARAM w, LPARAM l) -> LRESULT {
+        if (m == WM_COMMAND || m == WM_NOTIFY) {
+            HWND p = GetParent(hh);
+            if (p) { SendMessageW(p, m, w, l); return 0; }
+        }
+        WNDPROC old = (WNDPROC)GetPropW(hh, L"M2OLD_BRIDGE");
+        return old ? CallWindowProcW(old, hh, m, w, l) : DefWindowProcW(hh, m, w, l);
+    });
+}
+
+// ---------------------------------------------------------------------------
+//  Dize birlestirme: L"Secim: " + comboBox1->Items->SelectedItem gibi
+//  property nesneleri dogal sozdizimiyle birlestirilebilsin (ADL icin M2God'da)
+// ---------------------------------------------------------------------------
+template <typename T, typename = typename std::enable_if<std::is_class<T>::value && !std::is_same<T, std::wstring>::value && std::is_convertible<const T&, std::wstring>::value>::type>
+inline std::wstring operator+(const wchar_t* a, const T& b) { return std::wstring(a) + (std::wstring)b; }
+template <typename T, typename = typename std::enable_if<std::is_class<T>::value && !std::is_same<T, std::wstring>::value && std::is_convertible<const T&, std::wstring>::value>::type>
+inline std::wstring operator+(const T& b, const wchar_t* a) { return (std::wstring)b + a; }
+template <typename T, typename = typename std::enable_if<std::is_class<T>::value && !std::is_same<T, std::wstring>::value && std::is_convertible<const T&, std::wstring>::value>::type>
+inline std::wstring operator+(const std::wstring& a, const T& b) { return a + (std::wstring)b; }
+
+// ---------------------------------------------------------------------------
+//  wcsncpy muadili — C4996 (güvensiz CRT) uyarisi ÜRETMEDEN ayni davranis:
+//  kaynagi n karaktere kadar kopyala, kisa kaynakta kalan alan null doldur
+// ---------------------------------------------------------------------------
+inline void M2StrNCpy(wchar_t* dst, const wchar_t* src, size_t n) {
+    if (!dst || n == 0) return;
+    size_t i = 0;
+    if (src) { for (; i < n && src[i]; ++i) dst[i] = src[i]; }
+    for (; i < n; ++i) dst[i] = 0;
+}
+
+// ---------------------------------------------------------------------------
+//  Color — M2God::Color::Red gibi sabitler + FromArgb
+// ---------------------------------------------------------------------------
+struct Color {
+    static const COLORREF Red          = RGB(255, 0, 0);
+    static const COLORREF Green        = RGB(0, 128, 0);
+    static const COLORREF Blue         = RGB(0, 0, 255);
+    static const COLORREF White        = RGB(255, 255, 255);
+    static const COLORREF Black        = RGB(0, 0, 0);
+    static const COLORREF Yellow       = RGB(255, 255, 0);
+    static const COLORREF Orange       = RGB(255, 165, 0);
+    static const COLORREF Gold         = RGB(255, 215, 0);
+    static const COLORREF Purple       = RGB(128, 0, 128);
+    static const COLORREF Magenta      = RGB(255, 0, 255);
+    static const COLORREF Pink         = RGB(255, 192, 203);
+    static const COLORREF Brown        = RGB(165, 42, 42);
+    static const COLORREF Gray         = RGB(128, 128, 128);
+    static const COLORREF LightGray    = RGB(211, 211, 211);
+    static const COLORREF DarkGray     = RGB(64, 64, 64);
+    static const COLORREF Silver       = RGB(192, 192, 192);
+    static const COLORREF Cyan         = RGB(0, 255, 255);
+    static const COLORREF LightBlue    = RGB(173, 216, 230);
+    static const COLORREF LightGreen   = RGB(144, 238, 144);
+    static const COLORREF Navy         = RGB(0, 0, 128);
+    static const COLORREF Teal         = RGB(0, 128, 128);
+    static const COLORREF Lime         = RGB(0, 255, 0);
+    static const COLORREF Maroon       = RGB(128, 0, 0);
+    static const COLORREF Olive        = RGB(128, 128, 0);
+    static const COLORREF SkyBlue      = RGB(135, 206, 235);
+    static const COLORREF Tomato       = RGB(255, 99, 71);
+    static const COLORREF Khaki        = RGB(240, 230, 140);
+    static const COLORREF Beige        = RGB(245, 245, 220);
+    static const COLORREF Ivory        = RGB(255, 255, 240);
+    static const COLORREF Salmon       = RGB(250, 128, 114);
+    static const COLORREF Transparent  = 0xFFFFFFFE;   // ozel: cizimde atlanir
+    static const COLORREF Control      = RGB(240, 240, 240);
+    static const COLORREF Window       = RGB(255, 255, 255);
+    static const COLORREF ControlText  = RGB(0, 0, 0);
+    static const COLORREF WindowText   = RGB(0, 0, 0);
+    static const COLORREF Highlight    = RGB(0, 120, 215);
+    static COLORREF FromArgb(int r, int g, int b) { return RGB(r, g, b); }
+    static COLORREF FromArgb(int a, int r, int g, int b) { (void)a; return RGB(r, g, b); }
+    static int AlphaOf(COLORREF c) { (void)c; return 255; }
+    static int ROf(COLORREF c) { return (int)GetRValue(c); }
+    static int GOf(COLORREF c) { return (int)GetGValue(c); }
+    static int BOf(COLORREF c) { return (int)GetBValue(c); }
+};
+
+// ---------------------------------------------------------------------------
+//  Point / Size / Rectangle — Location/Size property'leri icin
+// ---------------------------------------------------------------------------
+struct Point {
+    int X = 0, Y = 0;
+    Point() {}
+    Point(int x, int y) : X(x), Y(y) {}
+};
+struct Size {
+    int Width = 0, Height = 0;
+    Size() {}
+    Size(int w, int h) : Width(w), Height(h) {}
+};
+struct Rectangle {
+    int X = 0, Y = 0, Width = 0, Height = 0;
+    Rectangle() {}
+    Rectangle(int x, int y, int w, int h) : X(x), Y(y), Width(w), Height(h) {}
+};
+struct M2DateTime {
+    int Year = 2024, Month = 1, Day = 1, Hour = 0, Minute = 0, Second = 0;
+    M2DateTime() {}
+    M2DateTime(int y, int m, int d, int hh = 0, int mm = 0, int ss = 0)
+        : Year(y), Month(m), Day(d), Hour(hh), Minute(mm), Second(ss) {}
+    static M2DateTime FromSystemTime(const SYSTEMTIME& st) {
+        return M2DateTime(st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    }
+    void ToSystemTime(SYSTEMTIME& st) const {
+        ZeroMemory(&st, sizeof(st));
+        st.wYear = (WORD)Year; st.wMonth = (WORD)Month; st.wDay = (WORD)Day;
+        st.wHour = (WORD)Hour; st.wMinute = (WORD)Minute; st.wSecond = (WORD)Second;
+    }
+    std::wstring ToString() const {
+        wchar_t b[64]; swprintf(b, 64, L"%02d.%02d.%04d %02d:%02d:%02d", Day, Month, Year, Hour, Minute, Second);
+        return b;
+    }
+};
+
+// ---------------------------------------------------------------------------
+//  Enumlar — WinForms degerleri korunur; uygulama kodu Win32'ye cevirir
+// ---------------------------------------------------------------------------
+enum class HorizontalAlignment   { Left = 0, Center = 1, Right = 2 };
+enum class BorderStyle           { None = 0, FixedSingle = 1, Fixed3D = 2 };
+enum class FlatStyle             { Standard = 0, Popup = 1, Flat = 2, System = 3 };
+enum class ComboBoxStyle         { Simple = 1, DropDown = 2, DropDownList = 3 };
+enum class CheckState            { Unchecked = 0, Checked = 1, Indeterminate = 2 };
+enum class View                  { LargeIcon = 0, Details = 1, SmallIcon = 2, List = 3, Tile = 4 };
+enum class SortOrder             { None = 0, Ascending = 1, Descending = 2 };
+enum class PictureBoxSizeMode    { Normal = 0, StretchImage = 1, AutoSize = 2, CenterImage = 3, Zoom = 4 };
+enum class ProgressBarStyle      { Blocks = 0, Continuous = 1, Marquee = 2 };
+enum class DateTimePickerFormat  { Long = 1, Short = 2, Time = 3, Custom = 4 };
+enum class TickStyle             { None = 0, TopLeft = 1, BottomRight = 2, Both = 3 };
+enum class Orientation           { Horizontal = 0, Vertical = 1 };
+enum class SelectionMode         { None = 0, One = 1, MultiSimple = 2, MultiExtended = 3 };
+enum class CharacterCasing       { Normal = 0, Upper = 1, Lower = 2 };
+enum class ScrollBars            { None = 0, Horizontal = 1, Vertical = 2, Both = 3 };
+enum class HeaderStyle           { Clickable = 0, NonClickable = 1, None = 2 };
+enum class ContentAlignment      { TopLeft = 1, TopCenter = 2, TopRight = 4,
+                                   MiddleLeft = 16, MiddleCenter = 32, MiddleRight = 64,
+                                   BottomLeft = 256, BottomCenter = 512, BottomRight = 1024 };
+enum class MessageBoxButtons     { OK = 0, OKCancel = 1, AbortRetryIgnore = 2, YesNoCancel = 3, YesNo = 4, RetryCancel = 5 };
+enum class MessageBoxIcon        { None = 0, Error = 16, Question = 32, Warning = 48, Information = 64, Hand = 16, Stop = 16, Exclamation = 48, Asterisk = 64 };
+enum class DialogResult          { None = 0, OK = 1, Cancel = 2, Abort = 3, Retry = 4, Ignore = 5, Yes = 6, No = 7 };
+enum class FormBorderStyle       { None = 0, FixedSingle = 1, Fixed3D = 2, FixedDialog = 3, Sizable = 4, FixedToolWindow = 5, SizableToolWindow = 6 };
+enum class FormStartPosition     { Manual = 0, CenterScreen = 1, WindowsDefaultLocation = 2, WindowsDefaultBounds = 3, CenterParent = 4 };
+enum class FormWindowState       { Normal = 0, Minimized = 1, Maximized = 2 };
+enum class RichTextBoxStreamType { RichText = 0, PlainText = 1, UnicodePlainText = 2, LineText = 4 };
+enum class Keys                  { None = 0, Back = 8, Tab = 9, Enter = 13, Shift = 16, Control = 17, Menu = 18,
+                                   Escape = 27, Space = 32, PageUp = 33, PageDown = 34, End = 35, Home = 36,
+                                   Left = 37, Up = 38, Right = 39, Down = 40, Insert = 45, Delete = 46,
+                                   D0 = 48, D1 = 49, D2 = 50, D3 = 51, D4 = 52, D5 = 53, D6 = 54, D7 = 55, D8 = 56, D9 = 57,
+                                   A = 65, B = 66, C = 67, D = 68, E = 69, F = 70, G = 71, H = 72, I = 73, J = 74,
+                                   K = 75, L = 76, M = 77, N = 78, O = 79, P = 80, Q = 81, R = 82, S = 83, T = 84,
+                                   U = 85, V = 86, W = 87, X = 88, Y = 89, Z = 90,
+                                   NumPad0 = 96, NumPad1 = 97, NumPad2 = 98, NumPad3 = 99, NumPad4 = 100,
+                                   NumPad5 = 101, NumPad6 = 102, NumPad7 = 103, NumPad8 = 104, NumPad9 = 105,
+                                   F1 = 112, F2 = 113, F3 = 114, F4 = 115, F5 = 116, F6 = 117, F7 = 118, F8 = 119,
+                                   F9 = 120, F10 = 121, F11 = 122, F12 = 123 };
+
+// ---------------------------------------------------------------------------
+//  UI fontu
+// ---------------------------------------------------------------------------
+inline HFONT GetUIFont() {
+    static HFONT f = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    return f;
+}
+// M2God::MakeFont(L"Tahoma", 10, true)
+inline HFONT MakeFont(const wchar_t* name, int pt, bool bold = false,
+                      bool italic = false, bool underline = false, bool strikeout = false) {
+    HDC dc = GetDC(nullptr);
+    int hgt = -MulDiv(pt > 0 ? pt : 9, GetDeviceCaps(dc, LOGPIXELSY), 72);
+    ReleaseDC(nullptr, dc);
+    return CreateFontW(hgt, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL,
+        italic ? TRUE : FALSE, underline ? TRUE : FALSE, strikeout ? TRUE : FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, name);
+}
+// M2God::FontName/FontSize/FontBold/FontItalic/FontUnderline — bir fonttan oku
+inline std::wstring FontName(HFONT f) {
+    if (!f) return L"Segoe UI";
+    LOGFONTW lf; ZeroMemory(&lf, sizeof(lf));
+    GetObjectW(f, sizeof(lf), &lf);
+    return lf.lfFaceName;
+}
+inline int FontSize(HFONT f) {
+    if (!f) return 9;
+    LOGFONTW lf; ZeroMemory(&lf, sizeof(lf));
+    GetObjectW(f, sizeof(lf), &lf);
+    HDC dc = GetDC(nullptr);
+    int pt = MulDiv(-lf.lfHeight, 72, GetDeviceCaps(dc, LOGPIXELSY));
+    ReleaseDC(nullptr, dc);
+    return pt;
+}
+
+// ---------------------------------------------------------------------------
+//  Renk kayit defteri — BackColor/ForeColor WM_CTLCOLOR* ile uygulanir
+// ---------------------------------------------------------------------------
+struct ColorInfo { COLORREF back = 0xFFFFFFFF; COLORREF fore = 0xFFFFFFFF; };
+// FAZ 2.11: formun etkin zemin rengi (M2God::Form::BackColor ataması günceller;
+// CtlPaint — Aqua/Rad kontrol çizimi — ebeveyn zeminini bundan okur)
+inline COLORREF& FormBackColorRef() { static COLORREF c = RGB(240, 240, 240); return c; }
+inline ColorInfo& CtrlColorInfo(HWND h) {
+    static std::map<HWND, ColorInfo> tbl;
+    return tbl[h];
+}
+// Form1_WndProc icindeki WM_CTLCOLOR* case'lerinden cagrilir
+inline LRESULT HandleCtlColor(HWND ctrl, HDC dc) {
+    ColorInfo ci = CtrlColorInfo(ctrl);
+    bool hasBack = (ci.back != 0xFFFFFFFF), hasFore = (ci.fore != 0xFFFFFFFF);
+    // FAZ 2.13: M2God grafit temalarda acik BackColor/ForeColor yoksa alanlar
+    // (EDIT/LISTBOX) KENDİ koyu rengine boyanır: #141414 zemin + beyaz metin
+    // (Faz2.5 CLR_EDIT_BACK birebir). Statikler yalnız beyaz metin alır.
+    if (Theme::IsGraphite(Theme::Cur)) {
+        wchar_t cls[32]; GetClassNameW(ctrl, cls, 32);
+        bool isField = (_wcsicmp(cls, L"EDIT") == 0 || _wcsicmp(cls, L"LISTBOX") == 0);
+        if (!hasBack && isField) { ci.back = RGB(20, 20, 20); hasBack = true; }
+        if (!hasFore) { ci.fore = RGB(255, 255, 255); hasFore = true; }
+    }
+    if (!hasBack && !hasFore) return 0;
+    if (hasFore) SetTextColor(dc, ci.fore);
+    if (hasBack) {
+        SetBkColor(dc, ci.back);
+        static std::map<HWND, HBRUSH> brushes;
+        auto it = brushes.find(ctrl);
+        if (it == brushes.end()) {
+            HBRUSH b = CreateSolidBrush(ci.back);
+            brushes[ctrl] = b;
+            return (LRESULT)(INT_PTR)b;
+        }
+        return (LRESULT)(INT_PTR)it->second;
+    }
+    SetBkMode(dc, TRANSPARENT);
+    return (LRESULT)(INT_PTR)GetStockObject(HOLLOW_BRUSH);
+}
+
+// ---------------------------------------------------------------------------
+//  Panel sinifi (M2GOD_PANEL_GEN) — kapsayici icin ozel pencere
+// ---------------------------------------------------------------------------
+inline LRESULT CALLBACK M2PanelProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_ERASEBKGND) {
+        HDC dc = (HDC)w; RECT rc; GetClientRect(h, &rc);
+        ColorInfo ci = CtrlColorInfo(h);
+        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
+        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
+        return 1;
+    }
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        RECT rc; GetClientRect(h, &rc);
+        ColorInfo ci = CtrlColorInfo(h);
+        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
+        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
+        wchar_t buf[256]; int n = GetWindowTextW(h, buf, 256);
+        if (n > 0) {
+            SetBkMode(dc, TRANSPARENT);
+            if (ci.fore != 0xFFFFFFFF) SetTextColor(dc, ci.fore);
+            SelectObject(dc, GetUIFont());
+            RECT tr = rc; tr.left += 4; tr.top += 2;
+            DrawTextW(dc, buf, n, &tr, DT_LEFT | DT_TOP);
+        }
+        EndPaint(h, &ps);
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+inline void EnsurePanelClass() {
+    static bool done = false; if (done) return; done = true;
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = M2PanelProc;
+    wc.hInstance   = GetModuleHandleW(nullptr);
+    wc.hCursor     = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    wc.lpszClassName = L"M2GOD_PANEL_GEN";
+    RegisterClassW(&wc);
+}
+inline void EnsureRichEdit() {
+    static bool done = false; if (done) return; done = true;
+    LoadLibraryW(L"Riched20.dll");
+}
+
+// ---------------------------------------------------------------------------
+//  Yardimci: pencere stili degistir + cizgeyi tazele
+// ---------------------------------------------------------------------------
+inline void RestyleWindow(HWND h, LONG_PTR addStyle, LONG_PTR removeStyle,
+                          LONG_PTR addEx = 0, LONG_PTR removeEx = 0) {
+    if (!h) return;
+    LONG_PTR st = GetWindowLongPtrW(h, GWL_STYLE);
+    st = (st | addStyle) & ~removeStyle;
+    SetWindowLongPtrW(h, GWL_STYLE, st);
+    LONG_PTR ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+    ex = (ex | addEx) & ~removeEx;
+    SetWindowLongPtrW(h, GWL_EXSTYLE, ex);
+    SetWindowPos(h, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+// ============================================================================
+//  Control — tum gorsel kontrollerin temeli (property vekilleri)
+// ============================================================================
+class Control {
+public:
+    HWND Handle = NULL;
+    int  Id     = 0;
+    std::wstring Tag;        // serbest metin (tasarimcidan gelmez; kullanicinin)
+    std::wstring Name;       // kontrol adi
+    int TabIndexStored = 0;  // Win32'de siralama yaratma sirasidir; bilgi amacli
+
+    Control() {}
+    Control(HWND h, int id) : Handle(h), Id(id) {}
+    virtual ~Control() {}
+
+    operator HWND() const { return Handle; }   // SendMessage(button1, ...) gibi
+
+    // ---- Text ----
+    class TextProp {
+        Control* c;
+    public:
+        explicit TextProp(Control* o) : c(o) {}
+        TextProp& operator=(const std::wstring& s) { if (c->Handle) SetWindowTextW(c->Handle, s.c_str()); return *this; }
+        TextProp& operator=(const wchar_t* s) { return *this = std::wstring(s ? s : L""); }
+        operator std::wstring() const {
+            if (!c->Handle) return L"";
+            int n = GetWindowTextLengthW(c->Handle);
+            if (n <= 0) return L"";
+            std::vector<wchar_t> buf((size_t)n + 2, 0);
+            GetWindowTextW(c->Handle, buf.data(), n + 1);
+            return std::wstring(buf.data());
+        }
+        bool Empty() const { return ((std::wstring)*this).empty(); }
+    } Text{ this };
+
+    // ---- Enabled ----
+    class EnabledProp {
+        Control* c;
+    public:
+        explicit EnabledProp(Control* o) : c(o) {}
+        EnabledProp& operator=(bool v) { if (c->Handle) EnableWindow(c->Handle, v ? TRUE : FALSE); return *this; }
+        operator bool() const { return c->Handle && IsWindowEnabled(c->Handle) != 0; }
+    } Enabled{ this };
+
+    // ---- Visible ----
+    class VisibleProp {
+        Control* c;
+    public:
+        explicit VisibleProp(Control* o) : c(o) {}
+        VisibleProp& operator=(bool v) { if (c->Handle) ShowWindow(c->Handle, v ? SW_SHOW : SW_HIDE); return *this; }
+        operator bool() const { return c->Handle && IsWindowVisible(c->Handle) != 0; }
+    } Visible{ this };
+
+    // ---- Font (HFONT atanir; M2God::MakeFont ile uretilebilir) ----
+    class FontProp {
+        Control* c;
+    public:
+        explicit FontProp(Control* o) : c(o) {}
+        FontProp& operator=(HFONT f) { if (c->Handle) SendMessageW(c->Handle, WM_SETFONT, (WPARAM)f, MAKELPARAM(TRUE, 0)); return *this; }
+        operator HFONT() const { return c->Handle ? (HFONT)SendMessageW(c->Handle, WM_GETFONT, 0, 0) : nullptr; }
+    } Font{ this };
+
+    // ---- BackColor / ForeColor ----
+    class BackColorProp {
+        Control* c;
+    public:
+        explicit BackColorProp(Control* o) : c(o) {}
+        BackColorProp& operator=(COLORREF v) {
+            CtrlColorInfo(c->Handle).back = v;
+            if (c->Handle) { c->OnBackColorChanged(); InvalidateRect(c->Handle, nullptr, TRUE); }
+            return *this;
+        }
+        operator COLORREF() const { return CtrlColorInfo(c->Handle).back; }
+    } BackColor{ this };
+    class ForeColorProp {
+        Control* c;
+    public:
+        explicit ForeColorProp(Control* o) : c(o) {}
+        ForeColorProp& operator=(COLORREF v) {
+            CtrlColorInfo(c->Handle).fore = v;
+            if (c->Handle) { c->OnForeColorChanged(); InvalidateRect(c->Handle, nullptr, TRUE); }
+            return *this;
+        }
+        operator COLORREF() const { return CtrlColorInfo(c->Handle).fore; }
+    } ForeColor{ this };
+
+    // ---- Location (Point) ----
+    class LocationProp {
+        Control* c;
+    public:
+        explicit LocationProp(Control* o) : c(o) {}
+        LocationProp& operator=(const Point& p) {
+            if (c->Handle) SetWindowPos(c->Handle, nullptr, p.X, p.Y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            return *this;
+        }
+        LocationProp& operator=(const Size& s) = delete;   // karisiklik onlemi
+        operator Point() const {
+            if (!c->Handle) return Point();
+            RECT rc; GetWindowRect(c->Handle, &rc);
+            HWND p = GetParent(c->Handle);
+            POINT pt = { rc.left, rc.top };
+            if (p) MapWindowPoints(nullptr, p, &pt, 1);
+            return Point(pt.x, pt.y);
+        }
+        LocationProp& operator=(const wchar_t*) = delete;
+    } Location{ this };
+
+    // ---- Size ----
+    class SizeProp {
+        Control* c;
+    public:
+        explicit SizeProp(Control* o) : c(o) {}
+        SizeProp& operator=(const Size& s) {
+            if (c->Handle) SetWindowPos(c->Handle, nullptr, 0, 0, s.Width, s.Height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            return *this;
+        }
+        operator Size() const {
+            if (!c->Handle) return M2God::Size();
+            RECT rc; GetClientRect(c->Handle, &rc);
+            return M2God::Size(rc.right - rc.left, rc.bottom - rc.top);
+        }
+    } Size{ this };
+
+    // ---- Width / Height / Left / Top / Right / Bottom ----
+    class WidthProp {
+        Control* c;
+    public:
+        explicit WidthProp(Control* o) : c(o) {}
+        WidthProp& operator=(int v) { if (c->Handle) { RECT r; GetWindowRect(c->Handle, &r); SetWindowPos(c->Handle, nullptr, 0, 0, v, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE); } return *this; }
+        operator int() const { if (!c->Handle) return 0; RECT r; GetWindowRect(c->Handle, &r); return r.right - r.left; }
+    } Width{ this };
+    class HeightProp {
+        Control* c;
+    public:
+        explicit HeightProp(Control* o) : c(o) {}
+        HeightProp& operator=(int v) { if (c->Handle) { RECT r; GetWindowRect(c->Handle, &r); SetWindowPos(c->Handle, nullptr, 0, 0, r.right - r.left, v, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE); } return *this; }
+        operator int() const { if (!c->Handle) return 0; RECT r; GetWindowRect(c->Handle, &r); return r.bottom - r.top; }
+    } Height{ this };
+    class LeftProp {
+        Control* c;
+    public:
+        explicit LeftProp(Control* o) : c(o) {}
+        LeftProp& operator=(int v) { Point p = (Point)c->Location; c->Location = Point(v, p.Y); return *this; }
+        operator int() const { return ((Point)c->Location).X; }
+    } Left{ this };
+    class TopProp {
+        Control* c;
+    public:
+        explicit TopProp(Control* o) : c(o) {}
+        TopProp& operator=(int v) { Point p = (Point)c->Location; c->Location = Point(p.X, v); return *this; }
+        operator int() const { return ((Point)c->Location).Y; }
+    } Top{ this };
+    class RightProp {
+        Control* c;
+    public:
+        explicit RightProp(Control* o) : c(o) {}
+        RightProp& operator=(int v) { Point p = (Point)c->Location; c->Location = Point(v - (int)c->Width, p.Y); return *this; }
+        operator int() const { Point p = (Point)c->Location; return p.X + (int)c->Width; }
+    } Right{ this };
+    class BottomProp {
+        Control* c;
+    public:
+        explicit BottomProp(Control* o) : c(o) {}
+        BottomProp& operator=(int v) { Point p = (Point)c->Location; c->Location = Point(p.X, v - (int)c->Height); return *this; }
+        operator int() const { Point p = (Point)c->Location; return p.Y + (int)c->Height; }
+    } Bottom{ this };
+
+    // ---- TabStop (WS_TABSTOP stili) ----
+    class TabStopProp {
+        Control* c;
+    public:
+        explicit TabStopProp(Control* o) : c(o) {}
+        TabStopProp& operator=(bool v) {
+            if (c->Handle) RestyleWindow(c->Handle, v ? WS_TABSTOP : 0, v ? 0 : WS_TABSTOP);
+            return *this;
+        }
+        operator bool() const {
+            return c->Handle && (GetWindowLongPtrW(c->Handle, GWL_STYLE) & WS_TABSTOP) != 0;
+        }
+    } TabStop{ this };
+
+    // ---- sanal renk olaylari (RichTextBox override eder) ----
+    virtual void OnBackColorChanged() {}
+    virtual void OnForeColorChanged() {}
+
+    // ---- metotlar ----
+    void SetLocation(int x, int y) { Location = Point(x, y); }
+    void SetSize(int w, int h)     { Size = M2God::Size(w, h); }
+    void SetBounds(int x, int y, int w, int h) {
+        if (Handle) SetWindowPos(Handle, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    void Focus()                   { if (Handle) SetFocus(Handle); }
+    void Hide() { Visible = false; }
+    void Show() { Visible = true; }
+    void Refresh()  { if (Handle) { InvalidateRect(Handle, nullptr, TRUE); UpdateWindow(Handle); } }
+    void Invalidate() { if (Handle) InvalidateRect(Handle, nullptr, TRUE); }
+    void Update()   { if (Handle) UpdateWindow(Handle); }
+    void BringToFront() { if (Handle) SetWindowPos(Handle, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
+    void SendToBack()   { if (Handle) SetWindowPos(Handle, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
+    void Dispose()      { if (Handle) { DestroyWindow(Handle); Handle = nullptr; } }
+    HWND Parent() const { return Handle ? GetParent(Handle) : nullptr; }
+    Point PointToScreen(const Point& p) const {
+        POINT pt = { p.X, p.Y };
+        if (Handle) MapWindowPoints(Handle, nullptr, &pt, 1);
+        return Point(pt.x, pt.y);
+    }
+};
+
+// InitDone(): uretilen kod InitializeControls sonunda true yapar.
+// Init bitene kadar WndProc bildirim yonlendirmesi atlanir (zincirleme
+// bildirimlerin yarim nesnelere carpmasini onler).
+inline bool& InitDone() { static bool d = false; return d; }
+
+// ============================================================================
+//  Form — statik form API'si (M2God::Form::Handle uretilen koda atanir)
+//  C++14 uyumlu: "inline static" yerine SINIF-SABLONU tekniği kullaniliyor
+//  (VS2019 varsayilan /std:c++14 ayarinda derlenir; /std:c++17'de de aynen
+//   calisir). Sozdizimi degismedi: M2God::Form::Handle, M2God::Form::Text ...
+// ============================================================================
+template<typename D>
+struct FormBase {
+    static HWND Handle;                    // wWinMain/WM_CREATE icinde atanir
+
+    struct TextP {
+        void operator=(const std::wstring& s) { if (Handle) SetWindowTextW(Handle, s.c_str()); }
+        void operator=(const wchar_t* s) { *this = std::wstring(s ? s : L""); }
+        operator std::wstring() const {
+            if (!Handle) return L"";
+            int n = GetWindowTextLengthW(Handle);
+            std::vector<wchar_t> buf((size_t)n + 2, 0);
+            GetWindowTextW(Handle, buf.data(), n + 1);
+            return std::wstring(buf.data());
+        }
+    };
+    static TextP Text;
+    struct ClientSizeP {
+        void operator=(const Size& s) {
+            if (!Handle) return;
+            RECT rc = { 0, 0, s.Width, s.Height };
+            LONG_PTR st = GetWindowLongPtrW(Handle, GWL_STYLE);
+            AdjustWindowRect(&rc, (DWORD)st, FALSE);
+            SetWindowPos(Handle, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        operator Size() const {
+            if (!Handle) return Size();
+            RECT rc; GetClientRect(Handle, &rc);
+            return Size(rc.right - rc.left, rc.bottom - rc.top);
+        }
+    };
+    static ClientSizeP ClientSize;
+    struct BackColorP {
+        void operator=(COLORREF c) {
+            if (!Handle) return;
+            FormBackColorRef() = c;   // FAZ 2.11: CtlPaint ebeveyn zemini okur
+            HBRUSH br = CreateSolidBrush(c);
+            HBRUSH old = (HBRUSH)SetClassLongPtrW(Handle, GCLP_HBRBACKGROUND, (LONG_PTR)br);
+            if (old) DeleteObject(old);
+            InvalidateRect(Handle, nullptr, TRUE);
+        }
+        operator COLORREF() const { return CtrlColorInfo(Handle).back; }
+    };
+    static BackColorP BackColor;
+    struct ForeColorP {
+        void operator=(COLORREF c) { CtrlColorInfo(Handle).fore = c; if (Handle) InvalidateRect(Handle, nullptr, TRUE); }
+        operator COLORREF() const { return CtrlColorInfo(Handle).fore; }
+    };
+    static ForeColorP ForeColor;
+    struct TopMostP {
+        void operator=(bool v) {
+            if (Handle) SetWindowPos(Handle, v ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        operator bool() const {
+            return Handle && (GetWindowLongPtrW(Handle, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+        }
+    };
+    static TopMostP TopMost;
+    struct OpacityP {   // 0-100 (100 = tam opak)
+        void operator=(int pct) {
+            if (!Handle) return;
+            LONG_PTR ex = GetWindowLongPtrW(Handle, GWL_EXSTYLE);
+            if (pct >= 100) { SetWindowLongPtrW(Handle, GWL_EXSTYLE, ex & ~WS_EX_LAYERED); return; }
+            SetWindowLongPtrW(Handle, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+            SetLayeredWindowAttributes(Handle, 0, (BYTE)(pct < 0 ? 0 : pct > 100 ? 255 : pct * 255 / 100), LWA_ALPHA);
+        }
+    };
+    static OpacityP Opacity;
+    struct WindowStateP {
+        void operator=(FormWindowState ws) {
+            if (!Handle) return;
+            ShowWindow(Handle, ws == FormWindowState::Maximized ? SW_MAXIMIZE :
+                              ws == FormWindowState::Minimized ? SW_MINIMIZE : SW_RESTORE);
+        }
+        operator FormWindowState() const {
+            if (!Handle) return FormWindowState::Normal;
+            if (IsIconic(Handle)) return FormWindowState::Minimized;
+            if (IsZoomed(Handle)) return FormWindowState::Maximized;
+            return FormWindowState::Normal;
+        }
+    };
+    static WindowStateP WindowState;
+    struct MaximizeBoxP {
+        void operator=(bool v) { if (Handle) RestyleWindow(Handle, v ? WS_MAXIMIZEBOX : 0, v ? 0 : WS_MAXIMIZEBOX); }
+        operator bool() const { return Handle && (GetWindowLongPtrW(Handle, GWL_STYLE) & WS_MAXIMIZEBOX) != 0; }
+    };
+    static MaximizeBoxP MaximizeBox;
+    struct MinimizeBoxP {
+        void operator=(bool v) { if (Handle) RestyleWindow(Handle, v ? WS_MINIMIZEBOX : 0, v ? 0 : WS_MINIMIZEBOX); }
+        operator bool() const { return Handle && (GetWindowLongPtrW(Handle, GWL_STYLE) & WS_MINIMIZEBOX) != 0; }
+    };
+    static MinimizeBoxP MinimizeBox;
+    struct ControlBoxP {
+        void operator=(bool v) { if (Handle) RestyleWindow(Handle, v ? WS_SYSMENU : 0, v ? 0 : WS_SYSMENU); }
+    };
+    static ControlBoxP ControlBox;
+    struct FormBorderStyleP {
+        void operator=(M2God::FormBorderStyle b) {
+            if (!Handle) return;
+            LONG_PTR add = 0, rem = 0;
+            switch (b) {
+            case M2God::FormBorderStyle::None:            rem = WS_OVERLAPPEDWINDOW; add = WS_POPUP; break;
+            case M2God::FormBorderStyle::FixedSingle:     rem = WS_THICKFRAME | WS_MAXIMIZEBOX; break;
+            case M2God::FormBorderStyle::Fixed3D:
+            case M2God::FormBorderStyle::FixedDialog:     rem = WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX; add = WS_CAPTION | WS_SYSMENU; break;
+            case M2God::FormBorderStyle::FixedToolWindow: rem = WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU; break;
+            case M2God::FormBorderStyle::SizableToolWindow: rem = WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU; break;
+            default: break;   // Sizable — zaten WS_OVERLAPPEDWINDOW
+            }
+            RestyleWindow(Handle, add, rem);
+        }
+    };
+    static FormBorderStyleP FormBorderStyle;
+
+    static void Close()    { if (Handle) PostMessageW(Handle, WM_CLOSE, 0, 0); }
+    static void Activate() { if (Handle) { SetForegroundWindow(Handle); SetActiveWindow(Handle); } }
+    static void CenterToScreen() {
+        if (!Handle) return;
+        RECT rw, rd;
+        GetWindowRect(Handle, &rw);
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &rd, 0);
+        SetWindowPos(Handle, nullptr,
+            rd.left + ((rd.right - rd.left) - (rw.right - rw.left)) / 2,
+            rd.top + ((rd.bottom - rd.top) - (rw.bottom - rw.top)) / 2,
+            0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+};
+
+// Statik üye tanımlari — sinif sablonu üyesi olduklari icin header'da
+// tanimlanabilirler (C++14 uyumlu; ODR guvenli: tek varlik)
+template<typename D> HWND FormBase<D>::Handle = nullptr;
+template<typename D> typename FormBase<D>::TextP FormBase<D>::Text{};
+template<typename D> typename FormBase<D>::ClientSizeP FormBase<D>::ClientSize{};
+template<typename D> typename FormBase<D>::BackColorP FormBase<D>::BackColor{};
+template<typename D> typename FormBase<D>::ForeColorP FormBase<D>::ForeColor{};
+template<typename D> typename FormBase<D>::TopMostP FormBase<D>::TopMost{};
+template<typename D> typename FormBase<D>::OpacityP FormBase<D>::Opacity{};
+template<typename D> typename FormBase<D>::WindowStateP FormBase<D>::WindowState{};
+template<typename D> typename FormBase<D>::MaximizeBoxP FormBase<D>::MaximizeBox{};
+template<typename D> typename FormBase<D>::MinimizeBoxP FormBase<D>::MinimizeBox{};
+template<typename D> typename FormBase<D>::ControlBoxP FormBase<D>::ControlBox{};
+template<typename D> typename FormBase<D>::FormBorderStyleP FormBase<D>::FormBorderStyle{};
+
+// Form — sablon parametresi sabitlenmis takma ad (sozdizimi: M2God::Form::X)
+using Form = FormBase<void>;
+
+// ---------------------------------------------------------------------------
+// FAZ 2.12: CtlPaint — MODERN / APPLE & MAC KONTROL ÇİZİM KATMANI
+// (üretilen uygulama tarafı; tasarımcıda karşılığı src/paintctl.cpp — paletler
+// BİREBİR aynı). Tema geçişi YERİNDEDİR: SetThemeAll tüm denetim derilerini
+// pencere imha ETMEDEN günceller (aktivasyon bağlamı/pencere yaratma döngüsü
+// yok → çalışma anında kaç kez değiştirilirse değiştirilsin ÇÖKMEZ).
+//   Apple & Mac : KAPSÜL Aqua buton (tam yuvarlak uçlar + parlak üst bant +
+//                 mac mavisi default + odak halkası), Big Sur tarzı düz mavi
+//                 checkbox/radio, NSBox groupbox, mac alan kenarı (odak mavi)
+//   Modern      : .NET 4.8 WinForms görünümü (hover mavi buton, WinForms
+//                 checkbox/radio/groupbox, düz alan kenarı)
+// Alt sınıflama KOMUTLA yapılır (SetWindowLongPtrW) — comctl SetWindowSubclass
+// v5/v6 karışık süreçlerde güvensiz (Faz 2.10 dersi). Skin pencere
+// ÖZELLİĞİNDE saklanır; WM_DESTROY'da temizlenir. DERİ SÖKÜLÜRSE kOld DURUR
+// (passthrough zincir bozulmaz). AquaCtl::Apply = KİLİTLİ deri: menüden tema
+// değişse bile nesneye tasarlanan görünüm kalır.
+// ---------------------------------------------------------------------------
+namespace CtlPaint {
+
+enum { FL_MODERN = 1, FL_MAC = 2 };                    // 1=Modern 2=Apple & Mac
+enum { FL_RUBY = 3, FL_YELLOW = 4, FL_PURPLE = 5, FL_DARK = 6 };   // FAZ 2.13: M2God grafit (= tema id)
+enum { K_BUTTON = 0, K_CHECK = 1, K_RADIO = 2, K_GROUP = 3, K_FIELD = 4, K_COMBO = 5 };
+static const wchar_t* kSkin  = L"M2GOD_SKIN";
+static const wchar_t* kOld   = L"M2GOD_SKINOLD";
+static const wchar_t* kHover = L"M2GOD_SKINHOVER";
+static const wchar_t* kFocus = L"M2GOD_SKINFOCUS";
+static const wchar_t* kLock  = L"M2GOD_SKINLOCK";      // nesneye kilitli deri
+
+struct Skin { int kind; int flavor; };
+
+// ---------------------------------------------------------------------------
+// FAZ 2.13 — M2GOD GRAFIT PALETLERI (Faz2.5 src/theme.h degerleri BIREBIR;
+// tasarimci src/paintctl.cpp ile AYNI). 5 durakli buton gradyanlari
+// normal/hover/basilmis + alan/kutu/grup renkleri.
+// ---------------------------------------------------------------------------
+struct Graphite5 { COLORREF c[5]; COLORREF border; COLORREF text; COLORREF textShadow; BYTE shadowA; };
+struct GraphitePal {
+    Graphite5 btnN, btnH, btnP;
+    COLORREF fieldBack, fieldBorder, fieldText;
+    COLORREF boxFill, boxBorder, accent;
+    COLORREF groupBorder, groupTitle;
+    COLORREF arrowFillTop, arrowFillBottom;    // DarkComboBox ok dugmesi gradyani
+    COLORREF arrowBorder;                     // ok dugmesi kenari
+};
+inline const GraphitePal& GraphiteOf(int flavor) {
+    static GraphitePal ruby = []() {
+        GraphitePal p = {};
+        p.btnN = { { RGB(0xFF,0x60,0x60), RGB(0xE0,0x00,0x00), RGB(0xCC,0x00,0x00), RGB(0x99,0x00,0x00), RGB(0xE0,0x00,0x00) },
+                   RGB(0x5C,0x04,0x04), RGB(245,245,245), RGB(0,0,0), 80 };
+        p.btnH = { { RGB(0xFF,0x99,0x99), RGB(0xFF,0x60,0x60), RGB(0xFF,0x00,0x00), RGB(0xE0,0x00,0x00), RGB(0xCC,0x00,0x00) },
+                   RGB(0xA0,0x00,0x00), RGB(255,255,255), RGB(0,0,0), 100 };
+        p.btnP = { { RGB(0xFF,0x8A,0x80), RGB(0xFF,0x52,0x52), RGB(0xF4,0x43,0x36), RGB(0xD3,0x2F,0x2F), RGB(0xB7,0x1C,0x1C) },
+                   RGB(0x7F,0x00,0x00), RGB(255,255,255), RGB(30,0,0), 100 };
+        p.fieldBack = RGB(20,20,20); p.fieldBorder = RGB(60,10,10); p.fieldText = RGB(255,255,255);
+        p.boxFill = RGB(60,10,10);   p.boxBorder = RGB(138,29,49);  p.accent = RGB(202,41,40);
+        p.groupBorder = RGB(0x6E,0x6E,0x74); p.groupTitle = RGB(0xF1,0xF1,0xF1);
+        p.arrowFillTop = RGB(202,41,40);  p.arrowFillBottom = RGB(207,0,0);  p.arrowBorder = RGB(138,29,49);
+        return p;
+    }();
+    static GraphitePal yellow = []() {
+        GraphitePal p = {};
+        p.btnN = { { RGB(0xEB,0xDC,0xA2), RGB(0xEA,0xC0,0x46), RGB(0xE0,0x9E,0x00), RGB(0xC7,0x85,0x00), RGB(0xB2,0x77,0x00) },
+                   RGB(0x6A,0x3F,0x00), RGB(245,245,245), RGB(40,30,0), 80 };
+        p.btnH = { { RGB(0xFF,0xFA,0xCD), RGB(0xFF,0xEE,0x99), RGB(0xFF,0xD7,0x00), RGB(0xF0,0xB4,0x00), RGB(0xE0,0xA0,0x00) },
+                   RGB(0xA5,0x7C,0x00), RGB(255,255,255), RGB(40,30,0), 100 };
+        p.btnP = { { RGB(0xFC,0xF9,0xC6), RGB(0xFC,0xE2,0x5C), RGB(0xF7,0xB6,0x00), RGB(0xE1,0x9A,0x00), RGB(0xCC,0x88,0x00) },
+                   RGB(0x7B,0x4A,0x00), RGB(255,255,255), RGB(40,30,0), 100 };
+        p.fieldBack = RGB(20,20,20); p.fieldBorder = RGB(70,60,10); p.fieldText = RGB(255,255,255);
+        p.boxFill = RGB(70,60,15);   p.boxBorder = RGB(160,130,30); p.accent = RGB(220,160,30);
+        p.groupBorder = RGB(0x6E,0x6E,0x74); p.groupTitle = RGB(0xF1,0xF1,0xF1);
+        p.arrowFillTop = RGB(229,180,70); p.arrowFillBottom = RGB(180,120,20); p.arrowBorder = RGB(176,145,117);
+        return p;
+    }();
+    static GraphitePal purple = []() {
+        GraphitePal p = {};
+        COLORREF s = RGB(40,10,20), m = RGB(25,6,12), e = RGB(15,3,6);
+        p.btnN = { { s, RGB(32,8,16), m, RGB(20,4,9), e }, RGB(210,50,255), RGB(245,245,245), RGB(0,0,0), 80 };
+        p.btnH = { { s, RGB(32,8,16), m, RGB(20,4,9), e }, RGB(255,50,255), RGB(255,255,255), RGB(0,0,0), 100 };
+        p.btnP = { { RGB(35,8,18), RGB(30,6,16), RGB(20,4,10), RGB(10,1,4), RGB(5,0,2) },
+                   RGB(200,50,200), RGB(255,255,255), RGB(0,0,0), 120 };
+        p.fieldBack = RGB(20,20,20); p.fieldBorder = RGB(60,20,80); p.fieldText = RGB(255,255,255);
+        p.boxFill = RGB(60,30,80);   p.boxBorder = RGB(120,50,160); p.accent = RGB(140,50,180);
+        p.groupBorder = RGB(0x6E,0x6E,0x74); p.groupTitle = RGB(0xF1,0xF1,0xF1);
+        p.arrowFillTop = RGB(160,70,200); p.arrowFillBottom = RGB(100,35,130); p.arrowBorder = RGB(110,45,150);
+        return p;
+    }();
+    static GraphitePal dark = []() {
+        GraphitePal p = {};
+        p.btnN = { { RGB(0x60,0x60,0x60), RGB(0x48,0x48,0x48), RGB(0x3C,0x3C,0x3C), RGB(0x30,0x30,0x30), RGB(0x48,0x48,0x48) },
+                   RGB(0x20,0x20,0x20), RGB(245,245,245), RGB(0,0,0), 80 };
+        p.btnH = { { RGB(0x78,0x78,0x78), RGB(0x5C,0x5C,0x5C), RGB(0x4C,0x4C,0x4C), RGB(0x40,0x40,0x40), RGB(0x5C,0x5C,0x5C) },
+                   RGB(0x30,0x30,0x30), RGB(255,255,255), RGB(0,0,0), 100 };
+        p.btnP = { { RGB(0x50,0x50,0x50), RGB(0x3C,0x3C,0x3C), RGB(0x30,0x30,0x30), RGB(0x26,0x26,0x26), RGB(0x3C,0x3C,0x3C) },
+                   RGB(0x18,0x18,0x18), RGB(255,255,255), RGB(0,0,0), 100 };
+        p.fieldBack = RGB(20,20,20); p.fieldBorder = RGB(50,50,50); p.fieldText = RGB(255,255,255);
+        p.boxFill = RGB(50,50,50);   p.boxBorder = RGB(80,80,80);   p.accent = RGB(120,120,120);
+        p.groupBorder = RGB(0x6E,0x6E,0x74); p.groupTitle = RGB(0xF1,0xF1,0xF1);
+        p.arrowFillTop = RGB(100,100,100); p.arrowFillBottom = RGB(55,55,55); p.arrowBorder = RGB(75,75,75);
+        return p;
+    }();
+    switch (flavor) {
+    case FL_RUBY:   return ruby;
+    case FL_YELLOW: return yellow;
+    case FL_PURPLE: return purple;
+    case FL_DARK:   return dark;
+    default:        return dark;
+    }
+}
+inline int GraphiteFlavorOf(HWND h) {
+    Skin* sk = (Skin*)GetPropW(h, kSkin);
+    return sk ? sk->flavor : FL_DARK;
+}
+
+// ebeveynin etkin zemin rengi: form → FormBackColorRef, M2GOD_PANEL_GEN →
+// kendi BackColor'ı (yoksa beyaz), diğer → CtrlColorInfo / yukarı yürü
+inline COLORREF ParentBack(HWND h) {
+    HWND p = GetParent(h);
+    int depth = 0;
+    while (p && depth++ < 8) {
+        if (p == Form::Handle) return FormBackColorRef();
+        wchar_t cls[64]; GetClassNameW(p, cls, 64);
+        ColorInfo ci = CtrlColorInfo(p);
+        if (_wcsicmp(cls, L"M2GOD_PANEL_GEN") == 0)
+            return (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
+        if (ci.back != 0xFFFFFFFF) return ci.back;
+        p = GetParent(p);
+    }
+    return FormBackColorRef();
+}
+
+// --- çizim yardımcıları -------------------------------------------------------
+inline void VertGradient(HDC dc, RECT r, COLORREF top, COLORREF bot) {
+    int hgt = r.bottom - r.top;
+    for (int y = r.top; y < r.bottom; y++) {
+        int t = hgt > 0 ? (y - r.top) * 1000 / hgt : 0;
+        COLORREF c = RGB(GetRValue(top) + (GetRValue(bot) - GetRValue(top)) * t / 1000,
+                         GetGValue(top) + (GetGValue(bot) - GetGValue(top)) * t / 1000,
+                         GetBValue(top) + (GetBValue(bot) - GetBValue(top)) * t / 1000);
+        HBRUSH b = CreateSolidBrush(c);
+        RECT rr = { r.left, y, r.right, y + 1 };
+        FillRect(dc, &rr, b);
+        DeleteObject(b);
+    }
+}
+inline void FillRound(HDC dc, RECT r, int rad, COLORREF c) {
+    HBRUSH b = CreateSolidBrush(c);
+    HRGN rg = CreateRoundRectRgn(r.left, r.top, r.right + 1, r.bottom + 1, rad * 2, rad * 2);
+    FillRgn(dc, rg, b);
+    DeleteObject(rg); DeleteObject(b);
+}
+inline void FrameRound(HDC dc, RECT r, int rad, COLORREF c, int wpx = 1) {
+    HPEN p = CreatePen(PS_SOLID, wpx, c);
+    HPEN op = (HPEN)SelectObject(dc, p);
+    SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, rad * 2, rad * 2);
+    SelectObject(dc, op); DeleteObject(p);
+}
+inline void FrameSquare(HDC dc, RECT r, COLORREF c, int wpx = 1) {
+    HPEN p = CreatePen(PS_SOLID, wpx, c);
+    HPEN op = (HPEN)SelectObject(dc, p);
+    HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+    ::Rectangle(dc, r.left, r.top, r.right, r.bottom);
+    SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(p);
+}
+inline std::wstring WndText(HWND h) {
+    int len = GetWindowTextLengthW(h);
+    std::wstring s(len + 1, L'\0');
+    if (len > 0) GetWindowTextW(h, &s[0], len + 1);
+    s.resize((size_t)(len > 0 ? len : 0));
+    return s;
+}
+inline void DrawTextC(HWND h, HDC dc, RECT r, const std::wstring& s, COLORREF c, UINT fmt) {
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, c);
+    HFONT f = h ? (HFONT)SendMessageW(h, WM_GETFONT, 0, 0) : nullptr;
+    HFONT of = f ? (HFONT)SelectObject(dc, f) : (HFONT)SelectObject(dc, GetUIFont());
+    DrawTextW(dc, s.c_str(), -1, &r, fmt | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (f) SelectObject(dc, of);
+}
+inline void DrawCheckMark(HDC dc, int x0, int y0, COLORREF c, int wpx = 2) {
+    HPEN p = CreatePen(PS_SOLID, wpx, c);
+    HPEN op = (HPEN)SelectObject(dc, p);
+    MoveToEx(dc, x0 + 2, y0 + 6, nullptr);
+    LineTo(dc, x0 + 5, y0 + 9);
+    LineTo(dc, x0 + 10, y0 + 3);
+    SelectObject(dc, op); DeleteObject(p);
+}
+
+// --- MAC (AQUA) çizimleri (tasarımcı paintctl.cpp ile AYNI paletler) -----------
+inline void PaintMacButton(HWND h, HDC dc, RECT rc) {
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool pushed  = (bs & BST_PUSHED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    bool defBtn  = ((GetWindowLongPtrW(h, GWL_STYLE) & BS_TYPEMASK) == BS_DEFPUSHBUTTON);
+    std::wstring txt = WndText(h);
+    int cx = rc.right - rc.left, cy = rc.bottom - rc.top;
+    int rad = cx < cy ? cx / 2 : cy / 2; if (rad < 4) rad = 4; if (rad > 16) rad = 16;
+    COLORREF top, bot, bord, tcol, gloss;
+    if (defBtn) {
+        top   = pushed ? RGB(28, 100, 205) : RGB(79, 163, 255);
+        bot   = pushed ? RGB(16, 80, 170)  : RGB(10, 100, 210);
+        bord  = pushed ? RGB(10, 70, 150)  : RGB(8, 84, 174);
+        tcol  = RGB(255, 255, 255);
+        gloss = pushed ? RGB(120, 170, 235) : RGB(190, 222, 255);
+    } else if (pushed) {
+        top = RGB(220, 220, 224); bot = RGB(200, 200, 205);
+        bord = RGB(138, 138, 144); tcol = RGB(29, 29, 31); gloss = 0;
+    } else {
+        top = RGB(255, 255, 255); bot = RGB(227, 227, 230);
+        bord = hover ? RGB(168, 168, 174) : RGB(200, 200, 205);
+        tcol = RGB(29, 29, 31); gloss = RGB(255, 255, 255);
+    }
+    if (!enabled) { top = RGB(240, 240, 242); bot = RGB(233, 233, 235);
+                    tcol = RGB(176, 176, 182); bord = RGB(220, 220, 224); gloss = 0; }
+    int saved = SaveDC(dc);
+    HRGN rgn = CreateRoundRectRgn(rc.left, rc.top, rc.right + 1, rc.bottom + 1, rad * 2, rad * 2);
+    SelectClipRgn(dc, rgn);
+    VertGradient(dc, rc, top, bot);
+    if (gloss) {
+        int gh = (cy / 4 > 2) ? cy / 4 : 2;
+        RECT gl = { rc.left + 2, rc.top + 1, rc.right - 2, rc.top + 1 + gh };
+        HBRUSH gb = CreateSolidBrush(gloss);
+        FillRect(dc, &gl, gb); DeleteObject(gb);
+        gl = { rc.left + 2, rc.top + 1 + gh, rc.right - 2, rc.top + 2 + gh };
+        HBRUSH gb2 = CreateSolidBrush(RGB(
+            (GetRValue(gloss) + GetRValue(bot)) / 2,
+            (GetGValue(gloss) + GetGValue(bot)) / 2,
+            (GetBValue(gloss) + GetBValue(bot)) / 2));
+        FillRect(dc, &gl, gb2); DeleteObject(gb2);
+    }
+    DeleteObject(rgn);
+    RestoreDC(dc, saved);
+    FrameRound(dc, rc, rad, bord);
+    if (focused && enabled)
+        FrameRound(dc, { rc.left + 2, rc.top + 2, rc.right - 2, rc.bottom - 2 },
+                   rad - 2 < 2 ? 2 : rad - 2, RGB(10, 122, 255), 2);
+    DrawTextC(h, dc, rc, txt, tcol, DT_CENTER | DT_VCENTER);
+}
+inline void PaintMacCheck(HWND h, HDC dc, RECT rc, COLORREF back) {
+    HBRUSH bb = CreateSolidBrush(back);
+    FillRect(dc, &rc, bb); DeleteObject(bb);
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool checked = (bs & BST_CHECKED) != 0;
+    bool indet   = (bs & BST_INDETERMINATE) != 0;
+    bool pushed  = (bs & BST_PUSHED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    std::wstring txt = WndText(h);
+    int cy = (rc.top + rc.bottom) / 2;
+    int bx = rc.left + 2, by = cy - 8;
+    RECT box = { bx, by, bx + 16, by + 16 };
+    COLORREF fill = checked || indet ? (pushed ? RGB(8, 104, 216) : RGB(10, 122, 255)) : RGB(255, 255, 255);
+    COLORREF bord = (checked || indet) ? RGB(8, 104, 216) : (hover ? RGB(138, 138, 144) : RGB(213, 213, 216));
+    if (!enabled) { fill = RGB(240, 240, 242); bord = RGB(221, 221, 224); }
+    FillRound(dc, box, 4, fill);
+    FrameRound(dc, box, 4, bord);
+    if (enabled) {
+        if (checked) DrawCheckMark(dc, bx + 2, by + 2, RGB(255, 255, 255), 3);
+        if (indet) {
+            HPEN p = CreatePen(PS_SOLID, 3, RGB(255, 255, 255));
+            HPEN op = (HPEN)SelectObject(dc, p);
+            MoveToEx(dc, bx + 5, cy, nullptr); LineTo(dc, bx + 11, cy);
+            SelectObject(dc, op); DeleteObject(p);
+        }
+    }
+    if (focused && enabled)
+        FrameRound(dc, { box.left - 2, box.top - 2, box.right + 2, box.bottom + 2 }, 5, RGB(10, 122, 255), 2);
+    RECT tr = { box.right + 6, rc.top, rc.right - 2, rc.bottom };
+    DrawTextC(h, dc, tr, txt, enabled ? RGB(29, 29, 31) : RGB(176, 176, 182), DT_LEFT | DT_VCENTER);
+}
+inline void PaintMacRadio(HWND h, HDC dc, RECT rc, COLORREF back) {
+    FillRect(dc, &rc, CreateSolidBrush(back));
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool checked = (bs & BST_CHECKED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    std::wstring txt = WndText(h);
+    int cy = (rc.top + rc.bottom) / 2;
+    int bx = rc.left + 2, by = cy - 8;
+    RECT cir = { bx, by, bx + 16, by + 16 };
+    HBRUSH fb = CreateSolidBrush(RGB(255, 255, 255));
+    HBRUSH ob = (HBRUSH)SelectObject(dc, fb);
+    HPEN bp = CreatePen(PS_SOLID, 1, checked ? RGB(10, 122, 255)
+                     : (hover ? RGB(138, 138, 144) : RGB(213, 213, 216)));
+    HPEN op = (HPEN)SelectObject(dc, bp);
+    Ellipse(dc, cir.left, cir.top, cir.right, cir.bottom);
+    SelectObject(dc, op); SelectObject(dc, ob);
+    DeleteObject(bp); DeleteObject(fb);
+    if (checked && enabled) {
+        HBRUSH wb = CreateSolidBrush(RGB(10, 122, 255));
+        HBRUSH wo = (HBRUSH)SelectObject(dc, wb);
+        HPEN np = CreatePen(PS_SOLID, 1, RGB(10, 122, 255));
+        HPEN no = (HPEN)SelectObject(dc, np);
+        Ellipse(dc, bx + 5, by + 5, bx + 11, by + 11);
+        SelectObject(dc, no); SelectObject(dc, wo);
+        DeleteObject(np); DeleteObject(wb);
+    }
+    if (focused && enabled) {
+        HPEN fp = CreatePen(PS_SOLID, 2, RGB(10, 122, 255));
+        HPEN fo = (HPEN)SelectObject(dc, fp);
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Ellipse(dc, cir.left - 2, cir.top - 2, cir.right + 2, cir.bottom + 2);
+        SelectObject(dc, fo); DeleteObject(fp);
+    }
+    RECT tr = { cir.right + 6, rc.top, rc.right - 2, rc.bottom };
+    DrawTextC(h, dc, tr, txt, enabled ? RGB(29, 29, 31) : RGB(176, 176, 182), DT_LEFT | DT_VCENTER);
+}
+inline void PaintMacGroup(HWND h, HDC dc, RECT rc, COLORREF back) {
+    FillRect(dc, &rc, CreateSolidBrush(back));
+    std::wstring txt = WndText(h);
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    RECT br = { rc.left, rc.top + 8, rc.right - 1, rc.bottom - 1 };
+    FrameRound(dc, br, 6, RGB(213, 213, 216));
+    if (!txt.empty()) {
+        SIZE sz; HDC tdc = GetDC(h);
+        HFONT mf = (HFONT)SendMessageW(h, WM_GETFONT, 0, 0);
+        HFONT mold = (HFONT)SelectObject(tdc, mf ? mf : (HFONT)GetUIFont());
+        GetTextExtentPoint32W(tdc, txt.c_str(), (int)txt.size(), &sz);
+        SelectObject(tdc, mold);
+        ReleaseDC(h, tdc);
+        RECT tr = { rc.left + 9, rc.top, rc.left + 9 + sz.cx + 6, rc.top + 17 };
+        HBRUSH b = CreateSolidBrush(back);
+        FillRect(dc, &tr, b); DeleteObject(b);
+        DrawTextC(h, dc, { tr.left + 2, tr.top, tr.right, tr.bottom }, txt,
+                  enabled ? RGB(60, 60, 67) : RGB(176, 176, 182), DT_LEFT | DT_TOP);
+    }
+}
+
+// --- MODERN (.NET 4.8 WinForms) çizimleri (tasarımcı ile AYNI paletler) -------
+inline void PaintModernButton(HWND h, HDC dc, RECT rc) {
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool pushed  = (bs & BST_PUSHED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    bool defBtn  = ((GetWindowLongPtrW(h, GWL_STYLE) & BS_TYPEMASK) == BS_DEFPUSHBUTTON);
+    std::wstring txt = WndText(h);
+    COLORREF top, bot, bord, tcol = RGB(0, 0, 0);
+    if (!enabled) {
+        top = RGB(240, 240, 240); bot = RGB(240, 240, 240);
+        bord = RGB(191, 191, 191); tcol = RGB(130, 130, 130);
+    } else if (pushed) {
+        top = RGB(204, 228, 247); bot = RGB(182, 217, 242); bord = RGB(0, 92, 153);
+    } else if (hover) {
+        top = RGB(229, 241, 251); bot = RGB(215, 235, 248); bord = RGB(0, 120, 215);
+    } else {
+        top = RGB(255, 255, 255); bot = RGB(240, 240, 242); bord = RGB(173, 173, 173);
+    }
+    if (defBtn && enabled) bord = RGB(0, 120, 215);
+    int saved = SaveDC(dc);
+    HRGN rgn = CreateRoundRectRgn(rc.left, rc.top, rc.right + 1, rc.bottom + 1, 4, 4);
+    SelectClipRgn(dc, rgn);
+    VertGradient(dc, rc, top, bot);
+    DeleteObject(rgn);
+    RestoreDC(dc, saved);
+    FrameRound(dc, rc, 2, bord);
+    if (focused && enabled) {
+        HPEN p = CreatePen(PS_DOT, 1, RGB(128, 128, 128));
+        HPEN op = (HPEN)SelectObject(dc, p);
+        HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+        ::Rectangle(dc, rc.left + 3, rc.top + 3, rc.right - 3, rc.bottom - 3);
+        SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(p);
+    }
+    DrawTextC(h, dc, rc, txt, tcol, DT_CENTER | DT_VCENTER);
+}
+inline void PaintModernCheck(HWND h, HDC dc, RECT rc, COLORREF back) {
+    FillRect(dc, &rc, CreateSolidBrush(back));
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool checked = (bs & BST_CHECKED) != 0;
+    bool indet   = (bs & BST_INDETERMINATE) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    std::wstring txt = WndText(h);
+    int cy = (rc.top + rc.bottom) / 2;
+    int bx = rc.left + 2, by = cy - 7;
+    RECT box = { bx, by, bx + 14, by + 14 };
+    COLORREF fill = (checked || indet) ? RGB(0, 120, 215) : RGB(255, 255, 255);
+    COLORREF bord = (checked || indet) ? RGB(0, 90, 158) : (hover ? RGB(0, 120, 215) : RGB(90, 90, 90));
+    if (!enabled) { fill = RGB(240, 240, 240); bord = RGB(191, 191, 191); }
+    FillRound(dc, box, 2, fill);
+    FrameRound(dc, box, 2, bord);
+    if (enabled && checked) DrawCheckMark(dc, bx + 1, by + 1, RGB(255, 255, 255));
+    if (enabled && indet) {
+        HPEN p = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+        HPEN op = (HPEN)SelectObject(dc, p);
+        MoveToEx(dc, bx + 4, cy, nullptr); LineTo(dc, bx + 10, cy);
+        SelectObject(dc, op); DeleteObject(p);
+    }
+    if (focused && enabled)
+        FrameRound(dc, { box.left - 2, box.top - 2, box.right + 2, box.bottom + 2 }, 3, RGB(120, 120, 120), 1);
+    RECT tr = { box.right + 5, rc.top, rc.right - 2, rc.bottom };
+    DrawTextC(h, dc, tr, txt, enabled ? RGB(0, 0, 0) : RGB(130, 130, 130), DT_LEFT | DT_VCENTER);
+}
+inline void PaintModernRadio(HWND h, HDC dc, RECT rc, COLORREF back) {
+    FillRect(dc, &rc, CreateSolidBrush(back));
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool checked = (bs & BST_CHECKED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    std::wstring txt = WndText(h);
+    int cy = (rc.top + rc.bottom) / 2;
+    int bx = rc.left + 2, by = cy - 7;
+    RECT cir = { bx, by, bx + 14, by + 14 };
+    HBRUSH fb = CreateSolidBrush(RGB(255, 255, 255));
+    HBRUSH fo = (HBRUSH)SelectObject(dc, fb);
+    HPEN bp = CreatePen(PS_SOLID, checked ? 2 : 1, checked ? RGB(0, 90, 158)
+                     : (hover ? RGB(0, 120, 215) : RGB(90, 90, 90)));
+    HPEN bo = (HPEN)SelectObject(dc, bp);
+    Ellipse(dc, cir.left, cir.top, cir.right, cir.bottom);
+    SelectObject(dc, bo); SelectObject(dc, fo);
+    DeleteObject(bp); DeleteObject(fb);
+    if (checked && enabled) {
+        HBRUSH db = CreateSolidBrush(RGB(0, 120, 215));
+        HBRUSH dobj = (HBRUSH)SelectObject(dc, db);
+        HPEN np = CreatePen(PS_SOLID, 1, RGB(0, 120, 215));
+        HPEN no = (HPEN)SelectObject(dc, np);
+        Ellipse(dc, bx + 4, by + 4, bx + 10, by + 10);
+        SelectObject(dc, no); SelectObject(dc, dobj);
+        DeleteObject(np); DeleteObject(db);
+    }
+    if (focused && enabled) {
+        HPEN fp = CreatePen(PS_DOT, 1, RGB(120, 120, 120));
+        HPEN ffo = (HPEN)SelectObject(dc, fp);
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Ellipse(dc, cir.left - 2, cir.top - 2, cir.right + 2, cir.bottom + 2);
+        SelectObject(dc, ffo); DeleteObject(fp);
+    }
+    RECT tr = { cir.right + 5, rc.top, rc.right - 2, rc.bottom };
+    DrawTextC(h, dc, tr, txt, enabled ? RGB(0, 0, 0) : RGB(130, 130, 130), DT_LEFT | DT_VCENTER);
+}
+inline void PaintModernGroup(HWND h, HDC dc, RECT rc, COLORREF back) {
+    FillRect(dc, &rc, CreateSolidBrush(back));
+    std::wstring txt = WndText(h);
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    RECT br = { rc.left, rc.top + 8, rc.right - 1, rc.bottom - 1 };
+    FrameSquare(dc, br, RGB(173, 173, 173));
+    if (!txt.empty()) {
+        SIZE sz; HDC tdc = GetDC(h);
+        HFONT mf = (HFONT)SendMessageW(h, WM_GETFONT, 0, 0);
+        HFONT mold = (HFONT)SelectObject(tdc, mf ? mf : (HFONT)GetUIFont());
+        GetTextExtentPoint32W(tdc, txt.c_str(), (int)txt.size(), &sz);
+        SelectObject(tdc, mold);
+        ReleaseDC(h, tdc);
+        RECT tr = { rc.left + 9, rc.top, rc.left + 9 + sz.cx + 6, rc.top + 17 };
+        HBRUSH b = CreateSolidBrush(back);
+        FillRect(dc, &tr, b); DeleteObject(b);
+        DrawTextC(h, dc, { tr.left + 2, tr.top, tr.right, tr.bottom }, txt,
+                  enabled ? RGB(0, 0, 0) : RGB(130, 130, 130), DT_LEFT | DT_TOP);
+    }
+}
+
+// --- M2GOD GRAFIT (Ruby/Yellow/Purple/Dark) cizimleri (FAZ 2.13) ------------
+// Buton: 5 durakli gradyan (0.0/0.15/0.5/0.85/1.0 — Faz2.5 btn_Paint birebir)
+// + yuvarlak kose r=10 + 1px tema kenari + (+1,+1) alfa golgeli metin.
+// CheckBox/RadioButton: koyu grafit kutu + tema vurgu dolgusu, beyaz isaret.
+// GroupBox: M2God karakter kutusu gorunumu — baslik cizgi hizasinda.
+inline void VertGradient5(HDC dc, RECT r, const Graphite5& g) {
+    int hgt = r.bottom - r.top;
+    if (hgt <= 0) return;
+    static const float pos[5] = { 0.0f, 0.15f, 0.5f, 0.85f, 1.0f };
+    for (int y = r.top; y < r.bottom; y++) {
+        float f = (hgt > 1) ? (float)(y - r.top) / (float)(hgt - 1) : 0.0f;
+        int i = 0;
+        while (i < 3 && f > pos[i + 1]) i++;
+        float span = pos[i + 1] - pos[i];
+        float t = (span > 0) ? (f - pos[i]) / span : 0.0f;
+        if (t < 0) t = 0; if (t > 1) t = 1;
+        COLORREF a = g.c[i], b = g.c[i + 1];
+        COLORREF c = RGB(GetRValue(a) + (GetRValue(b) - GetRValue(a)) * (int)(t * 1000) / 1000,
+                         GetGValue(a) + (GetGValue(b) - GetGValue(a)) * (int)(t * 1000) / 1000,
+                         GetBValue(a) + (GetBValue(b) - GetBValue(a)) * (int)(t * 1000) / 1000);
+        HBRUSH br = CreateSolidBrush(c);
+        RECT rr = { r.left, y, r.right, y + 1 };
+        FillRect(dc, &rr, br);
+        DeleteObject(br);
+    }
+}
+inline COLORREF GraphiteBlendToBlack(COLORREF c, BYTE alpha) {
+    return RGB(GetRValue(c) * (255 - alpha) / 255, GetGValue(c) * (255 - alpha) / 255,
+               GetBValue(c) * (255 - alpha) / 255);
+}
+inline void PaintGraphiteButton(HWND h, HDC dc, RECT rc) {
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool pushed  = (bs & BST_PUSHED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    const GraphitePal& p = GraphiteOf(GraphiteFlavorOf(h));
+    const Graphite5& g = !enabled ? p.btnN : pushed ? p.btnP : hover ? p.btnH : p.btnN;
+    std::wstring txt = WndText(h);
+    RECT body = { rc.left, rc.top, rc.right - 1, rc.bottom - 1 };   // pathRect birebir
+    if (body.right <= body.left) body.right = rc.left + 1;
+    if (body.bottom <= body.top) body.bottom = rc.top + 1;
+    int rad = 10;
+    if ((body.right - body.left) < 24 || (body.bottom - body.top) < 24) rad = 6;
+    int saved = SaveDC(dc);
+    HRGN rgn = CreateRoundRectRgn(body.left, body.top, body.right + 1, body.bottom + 1, rad * 2, rad * 2);
+    SelectClipRgn(dc, rgn);
+    VertGradient5(dc, body, g);
+    DeleteObject(rgn);
+    RestoreDC(dc, saved);
+    FrameRound(dc, body, rad, enabled ? g.border : RGB(70,70,70));
+    if (focused && enabled) {
+        HPEN pen = CreatePen(PS_DOT, 1, RGB(200,200,200));
+        HPEN op = (HPEN)SelectObject(dc, pen);
+        HBRUSH ob = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+        ::Rectangle(dc, body.left + 3, body.top + 3, body.right - 3, body.bottom - 3);
+        SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(pen);
+    }
+    if (!txt.empty()) {
+        COLORREF tcol = enabled ? g.text : RGB(150,150,150);
+        RECT sr = { body.left + 1, body.top + 1 + (pushed ? 0 : 1), body.right, body.bottom };
+        DrawTextC(h, dc, sr, txt, GraphiteBlendToBlack(g.textShadow, g.shadowA), DT_CENTER | DT_VCENTER);
+        RECT tr = { body.left, body.top + (pushed ? 1 : 0), body.right, body.bottom };
+        DrawTextC(h, dc, tr, txt, tcol, DT_CENTER | DT_VCENTER);
+    }
+}
+inline void PaintGraphiteCheck(HWND h, HDC dc, RECT rc, COLORREF back) {
+    HBRUSH bb = CreateSolidBrush(back);
+    FillRect(dc, &rc, bb); DeleteObject(bb);
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool checked = (bs & BST_CHECKED) != 0;
+    bool indet   = (bs & BST_INDETERMINATE) != 0;
+    bool pushed  = (bs & BST_PUSHED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    const GraphitePal& p = GraphiteOf(GraphiteFlavorOf(h));
+    std::wstring txt = WndText(h);
+    int cy = (rc.top + rc.bottom) / 2;
+    int bx = rc.left + 2, by = cy - 7;
+    RECT box = { bx, by, bx + 14, by + 14 };
+    COLORREF fill = (checked || indet) ? (pushed ? p.boxBorder : p.accent) : p.boxFill;
+    COLORREF bord = (checked || indet) ? p.boxBorder : (hover ? p.boxBorder : RGB(110,110,116));
+    if (!enabled) { fill = RGB(45,45,45); bord = RGB(70,70,74); }
+    FillRound(dc, box, 3, fill);
+    FrameRound(dc, box, 3, bord);
+    if (enabled) {
+        if (checked) DrawCheckMark(dc, bx + 1, by + 1, RGB(255,255,255));
+        if (indet) {
+            HPEN pen = CreatePen(PS_SOLID, 2, RGB(255,255,255));
+            HPEN op = (HPEN)SelectObject(dc, pen);
+            MoveToEx(dc, bx + 4, cy, nullptr); LineTo(dc, bx + 10, cy);
+            SelectObject(dc, op); DeleteObject(pen);
+        }
+    }
+    if (focused && enabled)
+        FrameRound(dc, { box.left - 2, box.top - 2, box.right + 2, box.bottom + 2 }, 4, RGB(200,200,200), 1);
+    RECT tr = { box.right + 5, rc.top, rc.right - 2, rc.bottom };
+    DrawTextC(h, dc, tr, txt, enabled ? RGB(255,255,255) : RGB(150,150,150), DT_LEFT | DT_VCENTER);
+}
+inline void PaintGraphiteRadio(HWND h, HDC dc, RECT rc, COLORREF back) {
+    FillRect(dc, &rc, CreateSolidBrush(back));
+    int bs = (int)SendMessageW(h, BM_GETSTATE, 0, 0);
+    bool checked = (bs & BST_CHECKED) != 0;
+    bool focused = (bs & BST_FOCUS) != 0;
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool hover   = GetPropW(h, kHover) != nullptr;
+    const GraphitePal& p = GraphiteOf(GraphiteFlavorOf(h));
+    std::wstring txt = WndText(h);
+    int cy = (rc.top + rc.bottom) / 2;
+    int bx = rc.left + 2, by = cy - 7;
+    RECT cir = { bx, by, bx + 14, by + 14 };
+    HBRUSH fb = CreateSolidBrush(RGB(45,45,45));
+    HBRUSH ob = (HBRUSH)SelectObject(dc, fb);
+    HPEN bp = CreatePen(PS_SOLID, 1, checked ? p.boxBorder : (hover ? p.boxBorder : RGB(110,110,116)));
+    HPEN op = (HPEN)SelectObject(dc, bp);
+    Ellipse(dc, cir.left, cir.top, cir.right, cir.bottom);
+    SelectObject(dc, op); SelectObject(dc, ob);
+    DeleteObject(bp); DeleteObject(fb);
+    if (checked && enabled) {
+        HBRUSH wb = CreateSolidBrush(p.accent);
+        HBRUSH wo = (HBRUSH)SelectObject(dc, wb);
+        HPEN np = CreatePen(PS_SOLID, 1, p.accent);
+        HPEN no = (HPEN)SelectObject(dc, np);
+        Ellipse(dc, bx + 4, by + 4, bx + 10, by + 10);
+        SelectObject(dc, no); SelectObject(dc, wo);
+        DeleteObject(np); DeleteObject(wb);
+    }
+    if (focused && enabled) {
+        HPEN fp = CreatePen(PS_DOT, 1, RGB(200,200,200));
+        HPEN fo = (HPEN)SelectObject(dc, fp);
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Ellipse(dc, cir.left - 2, cir.top - 2, cir.right + 2, cir.bottom + 2);
+        SelectObject(dc, fo); DeleteObject(fp);
+    }
+    RECT tr = { cir.right + 5, rc.top, rc.right - 2, rc.bottom };
+    DrawTextC(h, dc, tr, txt, enabled ? RGB(255,255,255) : RGB(150,150,150), DT_LEFT | DT_VCENTER);
+}
+inline void PaintGraphiteGroup(HWND h, HDC dc, RECT rc, COLORREF back) {
+    HBRUSH bb = CreateSolidBrush(back);
+    FillRect(dc, &rc, bb); DeleteObject(bb);
+    const GraphitePal& p = GraphiteOf(GraphiteFlavorOf(h));
+    std::wstring txt = WndText(h);
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    RECT br = { rc.left, rc.top + 8, rc.right - 1, rc.bottom - 1 };
+    FrameRound(dc, br, 6, p.groupBorder);
+    if (!txt.empty()) {
+        SIZE sz; HDC tdc = GetDC(h);
+        HFONT mf = (HFONT)SendMessageW(h, WM_GETFONT, 0, 0);
+        HFONT mold = (HFONT)SelectObject(tdc, mf ? mf : (HFONT)GetUIFont());
+        GetTextExtentPoint32W(tdc, txt.c_str(), (int)txt.size(), &sz);
+        SelectObject(tdc, mold);
+        ReleaseDC(h, tdc);
+        RECT gap = { rc.left + 9, rc.top + 6, rc.left + 9 + sz.cx + 6, rc.top + 11 };
+        HBRUSH b = CreateSolidBrush(back);
+        FillRect(dc, &gap, b); DeleteObject(b);
+        RECT tr = { gap.left + 2, rc.top, gap.right, rc.top + 16 };
+        DrawTextC(h, dc, tr, txt, enabled ? p.groupTitle : RGB(150,150,150), DT_LEFT | DT_VCENTER);
+    }
+}
+
+// ComboBox: M2God DarkComboBox görünümü — koyu gövde + beyaz seçim metni +
+// sağda tema renkli ok düğmesi (Faz2.5 comboArrow gradyanı birebir).
+// Açılır liste (ComboLBox) sistem penceresidir — kalır.
+inline void PaintGraphiteCombo(HWND h, HDC dc, RECT rc) {
+    const GraphitePal& p = GraphiteOf(GraphiteFlavorOf(h));
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    HBRUSH bb = CreateSolidBrush(enabled ? p.fieldBack : RGB(40,40,40));
+    RECT body = { rc.left, rc.top, rc.right - 1, rc.bottom - 1 };
+    FillRect(dc, &body, bb); DeleteObject(bb);
+    FrameSquare(dc, body, enabled ? p.fieldBorder : RGB(70,70,70), 1);
+    int aw = 17;
+    RECT ar = { rc.right - 1 - aw, rc.top, rc.right - 1, rc.bottom - 1 };
+    int saved = SaveDC(dc);
+    HRGN rg = CreateRectRgn(ar.left, ar.top, ar.right, ar.bottom);
+    SelectClipRgn(dc, rg);
+    VertGradient(dc, ar, p.arrowFillTop, p.arrowFillBottom);
+    SelectClipRgn(dc, NULL);
+    DeleteObject(rg);
+    RestoreDC(dc, saved);
+    FrameSquare(dc, { ar.left, ar.top, ar.right, ar.bottom }, p.arrowBorder, 1);
+    int acx = (ar.left + ar.right) / 2, acy = (ar.top + ar.bottom) / 2;
+    HPEN pen = CreatePen(PS_SOLID, 1, RGB(255,255,255));
+    HPEN op = (HPEN)SelectObject(dc, pen);
+    HBRUSH fb = CreateSolidBrush(RGB(255,255,255));
+    HBRUSH ob = (HBRUSH)SelectObject(dc, fb);
+    POINT tri[3] = { { acx - 4, acy - 2 }, { acx + 4, acy - 2 }, { acx, acy + 3 } };
+    Polygon(dc, tri, 3);
+    SelectObject(dc, op); SelectObject(dc, ob);
+    DeleteObject(pen); DeleteObject(fb);
+    std::wstring txt = WndText(h);
+    if (!txt.empty()) {
+        RECT tr = { rc.left + 5, rc.top, rc.right - aw - 4, rc.bottom - 1 };
+        DrawTextC(h, dc, tr, txt, enabled ? RGB(255,255,255) : RGB(150,150,150), DT_LEFT | DT_VCENTER);
+    }
+}
+
+// --- FIELD (TextBox/ListBox) kenar çizimi — mac & modern ----------------------
+inline void PaintFieldBorder(HWND h, Skin* sk) {
+    HDC dc = GetWindowDC(h);
+    if (!dc) return;
+    RECT rc; GetWindowRect(h, &rc);
+    OffsetRect(&rc, -rc.left, -rc.top);
+    bool enabled = IsWindowEnabled(h) != FALSE;
+    bool focused = GetPropW(h, kFocus) != nullptr;
+    if (sk->flavor == FL_MAC) {
+        COLORREF bord = focused ? RGB(10, 122, 255) : (enabled ? RGB(213, 213, 216) : RGB(225, 225, 228));
+        if (focused) FrameRound(dc, rc, 4, bord, 2);
+        else        FrameRound(dc, rc, 4, bord, 1);
+    } else if (Theme::IsGraphite(sk->flavor)) {
+        // M2God grafit: 1px tema kenari; ici koyu #141414 alan WM_CTLCOLOR ile
+        const GraphitePal& p = GraphiteOf(sk->flavor);
+        COLORREF bord = focused ? p.accent : (enabled ? p.fieldBorder : RGB(70, 70, 70));
+        FrameSquare(dc, rc, bord, 1);
+    } else {
+        COLORREF bord = focused ? RGB(0, 120, 215) : (enabled ? RGB(173, 173, 173) : RGB(191, 191, 191));
+        FrameSquare(dc, rc, bord, 1);
+    }
+    ReleaseDC(h, dc);
+}
+// alan denetiminin sistem kenarını al / geri ver (çerçeveyi tema çizsin)
+inline void FieldSystemEdge(HWND h, bool give) {
+    LONG_PTR ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+    LONG_PTR st = GetWindowLongPtrW(h, GWL_STYLE);
+    LONG_PTR nex = give ? (ex | WS_EX_CLIENTEDGE)   : (ex & ~(LONG_PTR)WS_EX_CLIENTEDGE);
+    LONG_PTR nst = give ? (st | WS_BORDER)          : (st & ~(LONG_PTR)WS_BORDER);
+    if (nex != ex) SetWindowLongPtrW(h, GWL_EXSTYLE, nex);
+    if (nst != st) SetWindowLongPtrW(h, GWL_STYLE, nst);
+    if (nex != ex || nst != st)
+        SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+}
+
+// --- ortak prosedür ---------------------------------------------------------------
+inline void PaintSkin(HWND h, Skin* sk) {
+    if (sk->kind == K_FIELD) return;
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(h, &ps);
+    RECT rc; GetClientRect(h, &rc);
+    COLORREF back = ParentBack(h);
+    int key = sk->kind * 10 + sk->flavor;
+    if      (key == K_BUTTON * 10 + FL_MAC)     PaintMacButton(h, dc, rc);
+    else if (key == K_CHECK  * 10 + FL_MAC)     PaintMacCheck(h, dc, rc, back);
+    else if (key == K_RADIO  * 10 + FL_MAC)     PaintMacRadio(h, dc, rc, back);
+    else if (key == K_GROUP  * 10 + FL_MAC)     PaintMacGroup(h, dc, rc, back);
+    else if (key == K_BUTTON * 10 + FL_MODERN) PaintModernButton(h, dc, rc);
+    else if (key == K_CHECK  * 10 + FL_MODERN) PaintModernCheck(h, dc, rc, back);
+    else if (key == K_RADIO  * 10 + FL_MODERN) PaintModernRadio(h, dc, rc, back);
+    else if (key == K_GROUP  * 10 + FL_MODERN) PaintModernGroup(h, dc, rc, back);
+    else if (Theme::IsGraphite(sk->flavor)) {   // FAZ 2.13: M2God grafit 4'lüsü
+        switch (sk->kind) {
+        case K_BUTTON: PaintGraphiteButton(h, dc, rc); break;
+        case K_CHECK:  PaintGraphiteCheck(h, dc, rc, back); break;
+        case K_RADIO: PaintGraphiteRadio(h, dc, rc, back); break;
+        case K_GROUP: PaintGraphiteGroup(h, dc, rc, back); break;
+        case K_COMBO: PaintGraphiteCombo(h, dc, rc); break;   // DarkComboBox görünümü
+        }
+    }
+    EndPaint(h, &ps);
+}
+
+inline LRESULT CALLBACK SkinProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    Skin* sk = (Skin*)GetPropW(h, kSkin);
+    // kOld deri söküldükten sonra DAHİ kalır (passthrough zincir bozulmaz);
+    // yalnız gerçek WM_DESTROY'da temizlenir.
+    WNDPROC old = (WNDPROC)GetPropW(h, kOld);
+    switch (m) {
+    case WM_ERASEBKGND:
+        if (sk && sk->kind != K_FIELD &&
+            !(sk->kind == K_COMBO && !Theme::IsGraphite(sk->flavor)))   // combo: grafit değilse standart
+            return 1;
+        break;
+    case WM_PAINT:
+        // combo YALNIZ grafit temada özel çizilir; modern/mac standart görünüm
+        if (sk && (sk->kind != K_COMBO || Theme::IsGraphite(sk->flavor)))
+            { PaintSkin(h, sk); return 0; }
+        break;
+    case WM_NCPAINT:
+        // alan derisi: eski NC çizimini yaptır, KENDİ çerçevemizi üstüne çiz
+        if (sk && sk->kind == K_FIELD) {
+            if (old) CallWindowProcW(old, h, m, w, l);
+            PaintFieldBorder(h, sk);
+            return 0;
+        }
+        break;
+    case WM_MOUSEMOVE:
+        if (!GetPropW(h, kHover)) {
+            SetPropW(h, kHover, (HANDLE)1);
+            TRACKMOUSEEVENT tm = { sizeof(tm), TME_LEAVE, h, 0 };
+            TrackMouseEvent(&tm);
+            InvalidateRect(h, NULL, TRUE);
+        }
+        break;
+    case WM_MOUSELEAVE:
+        RemovePropW(h, kHover);
+        InvalidateRect(h, NULL, TRUE);
+        break;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+        if (sk && sk->kind == K_FIELD) {
+            if (m == WM_SETFOCUS) SetPropW(h, kFocus, (HANDLE)1);
+            else RemovePropW(h, kFocus);
+            RedrawWindow(h, NULL, NULL, RDW_INVALIDATE | RDW_FRAME);
+        }
+        InvalidateRect(h, NULL, TRUE);
+        break;
+    case WM_ENABLE:
+        InvalidateRect(h, NULL, TRUE);
+        break;
+    case WM_DESTROY:
+        RemovePropW(h, kHover);
+        RemovePropW(h, kFocus);
+        RemovePropW(h, kLock);
+        RemovePropW(h, kOld);
+        if (sk) { RemovePropW(h, kSkin); delete sk; }
+        break;
+    }
+    return old ? CallWindowProcW(old, h, m, w, l) : DefWindowProcW(h, m, w, l);
+}
+
+// sınıf + stilden kind çöz (genel amaçlı — her pencereye uygulanabilir)
+inline int KindOfWindow(HWND h) {
+    wchar_t cls[32]; GetClassNameW(h, cls, 32);
+    if (_wcsicmp(cls, L"BUTTON") == 0) {
+        LONG_PTR st = GetWindowLongPtrW(h, GWL_STYLE) & BS_TYPEMASK;
+        if (st == BS_AUTOCHECKBOX || st == BS_AUTO3STATE || st == BS_CHECKBOX) return K_CHECK;
+        if (st == BS_AUTORADIOBUTTON) return K_RADIO;
+        if (st == BS_GROUPBOX) return K_GROUP;
+        return K_BUTTON;
+    }
+    if (_wcsicmp(cls, L"EDIT") == 0) return K_FIELD;
+    if (_wcsicmp(cls, L"LISTBOX") == 0) return K_FIELD;
+    if (_wcsicmp(cls, L"COMBOBOX") == 0) return K_COMBO;   // FAZ 2.13: grafit DarkComboBox
+    return -1;
+}
+
+inline bool SkinApply(HWND h, int theme, bool lock = false) {
+    if (!h || !IsWindow(h)) return false;
+    int kind = KindOfWindow(h);
+    if (kind < 0) return false;
+    int flavor = 0;
+    if      (theme == 2) flavor = FL_MAC;      // 2 = Apple & Mac
+    else if (theme == 1) flavor = FL_MODERN;   // 1 = Modern
+    else if (theme == 3) flavor = FL_RUBY;    // 3..6 = M2God grafit (FAZ 2.13)
+    else if (theme == 4) flavor = FL_YELLOW;
+    else if (theme == 5) flavor = FL_PURPLE;
+    else if (theme == 6) flavor = FL_DARK;
+
+    Skin* sk = (Skin*)GetPropW(h, kSkin);
+    if (flavor == 0) {
+        // OLDSCHOOL: deriyi YERİNDEN SÖK (kilitli ise DOKUNMA)
+        if (lock) return false;
+        if (sk && !GetPropW(h, kLock)) {
+            RemovePropW(h, kSkin);
+            bool wasField = (sk->kind == K_FIELD);
+            delete sk;
+            if (wasField) FieldSystemEdge(h, true);
+            InvalidateRect(h, NULL, TRUE);
+        }
+        return true;
+    }
+    if (sk) {   // zaten takılı — flavor YERİNDE güncelle (imha/yeniden yaratma yok)
+        if (GetPropW(h, kLock) && !lock) return true;   // kilitli deri değişmez
+        sk->kind = kind; sk->flavor = flavor;
+        if (kind == K_FIELD) FieldSystemEdge(h, false);
+        InvalidateRect(h, NULL, TRUE);
+        RedrawWindow(h, NULL, NULL, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE);
+        return true;
+    }
+    if (lock && GetPropW(h, kLock)) return true;       // kilit zaten var
+    sk = new Skin{ kind, flavor };
+    SetPropW(h, kSkin, sk);
+    if (lock) SetPropW(h, kLock, (HANDLE)1);
+    // KRİTİK: prosedür zincirine SADECE BİR KEZ gir (SkinProc zaten zincirdeyse
+    // kOld'ü aşılamayla ezme — sonsuz özyineleme olur)
+    WNDPROC cur = (WNDPROC)GetWindowLongPtrW(h, GWLP_WNDPROC);
+    if (cur != SkinProc) {
+        SetPropW(h, kOld, (HANDLE)cur);
+        SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)SkinProc);
+    }
+    if (kind == K_FIELD) {
+        FieldSystemEdge(h, false);
+        SendMessageW(h, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(4, 4));
+    }
+    InvalidateRect(h, NULL, TRUE);
+    return true;
+}
+
+// FAZ 2.12: TÜM denetim derilerini YERİNDE yeni temaya geçir — pencere imha
+// ETMEDEN (EnumChildWindows: formun tüm torunları taranır; kilitli deriler
+// değişmez; eski temaya takılı olmayan yeni denetimler de temaya katılır)
+inline BOOL CALLBACK ThemeAllEnumProc(HWND h, LPARAM lp) {
+    SkinApply(h, (int)lp, false);
+    return TRUE;
+}
+inline void SetThemeAll(int theme, HWND form) {
+    if (form && IsWindow(form))
+        EnumChildWindows(form, ThemeAllEnumProc, (LPARAM)theme);
+    else if (Form::Handle && IsWindow(Form::Handle))
+        EnumChildWindows(Form::Handle, ThemeAllEnumProc, (LPARAM)theme);
+}
+
+} // namespace CtlPaint
+
+// Apple & Mac (Aqua) görünümü — Button/CheckBox/RadioButton/GroupBox ve
+// TextBox/ListBox alanları. AquaCtl::Apply = KİLİTLİ deri: menüden tema
+// değişse bile nesneye tasarlanan mac görünümü kalır.
+// Eski MacStyle::Apply (yalnız Button) geriye uyum için yukarıda durur.
+namespace AquaCtl {
+    inline void Apply(HWND h) { CtlPaint::SkinApply(h, 2, true); }   // 2 = Apple & Mac (kilitli)
+}
+// Modern (.NET 4.8 WinForms) görünümü — nesneye KİLİTLİ deri
+namespace ModernCtl {
+    inline void Apply(HWND h) { CtlPaint::SkinApply(h, 1, true); }   // 1 = Modern (kilitli)
+}
+// FAZ 2.13: M2God grafit görünümü (3=Ruby 4=Yellow 5=Purple 6=Dark) — nesneye
+// KİLİTLİ deri; flavor parametresi tema kimliğidir (üretilen koda
+// GraphiteCtl::Apply(name->Handle, N) olarak yazılır)
+namespace GraphiteCtl {
+    inline void Apply(HWND h, int themeFlavor) {
+        if (themeFlavor < 3 || themeFlavor > 6) themeFlavor = 6;
+        CtlPaint::SkinApply(h, themeFlavor, true);
+    }
+}
+// Oldschool görünümüne KİLİT — SetThemeAll bu denetime asla deri takmaz
+namespace PlainCtl {
+    inline void Apply(HWND h) { if (h && IsWindow(h)) SetPropW(h, CtlPaint::kLock, (HANDLE)1); }
+}
+
+// ============================================================================
+//  Button
+// ============================================================================
+class Button : public Control {
+public:
+    Button(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"BUTTON", text.c_str(),
+            WS_TABSTOP | BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    void PerformClick() { if (Handle) SendMessageW(Handle, BM_CLICK, 0, 0); }
+    // TextAlign: ContentAlignment -> BS_* stilleri
+    class TextAlignProp {
+        Control* c;
+    public:
+        explicit TextAlignProp(Control* o) : c(o) {}
+        TextAlignProp& operator=(ContentAlignment a) {
+            if (!c->Handle) return *this;
+            LONG_PTR add = 0, rem = BS_LEFT | BS_RIGHT | BS_CENTER | BS_TOP | BS_BOTTOM | BS_VCENTER;
+            switch (a) {
+            case ContentAlignment::TopLeft:      add = BS_LEFT | BS_TOP; break;
+            case ContentAlignment::TopCenter:    add = BS_CENTER | BS_TOP; break;
+            case ContentAlignment::TopRight:     add = BS_RIGHT | BS_TOP; break;
+            case ContentAlignment::MiddleLeft:   add = BS_LEFT | BS_VCENTER; break;
+            case ContentAlignment::MiddleCenter: add = BS_CENTER | BS_VCENTER; break;
+            case ContentAlignment::MiddleRight:  add = BS_RIGHT | BS_VCENTER; break;
+            case ContentAlignment::BottomLeft:   add = BS_LEFT | BS_BOTTOM; break;
+            case ContentAlignment::BottomCenter: add = BS_CENTER | BS_BOTTOM; break;
+            case ContentAlignment::BottomRight:  add = BS_RIGHT | BS_BOTTOM; break;
+            }
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } TextAlign{ this };
+    // FlatStyle: Flat -> BS_FLAT
+    class FlatStyleProp {
+        Control* c;
+    public:
+        explicit FlatStyleProp(Control* o) : c(o) {}
+        FlatStyleProp& operator=(FlatStyle f) {
+            if (c->Handle) RestyleWindow(c->Handle, f == FlatStyle::Flat ? BS_FLAT : 0, f == FlatStyle::Flat ? 0 : BS_FLAT);
+            return *this;
+        }
+    } FlatStyle{ this };
+};
+
+// ============================================================================
+//  CheckBox / RadioButton
+// ============================================================================
+class CheckBox : public Control {
+public:
+    CheckBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"BUTTON", text.c_str(),
+            WS_TABSTOP | BS_AUTOCHECKBOX | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // checkBox1->Checked = true;
+    class CheckedProp {
+        Control* c;
+    public:
+        explicit CheckedProp(Control* o) : c(o) {}
+        CheckedProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0); return *this; }
+        operator bool() const { return c->Handle && SendMessageW(c->Handle, BM_GETCHECK, 0, 0) == BST_CHECKED; }
+    } Checked{ this };
+    class CheckStateProp {
+        Control* c;
+    public:
+        explicit CheckStateProp(Control* o) : c(o) {}
+        CheckStateProp& operator=(CheckState st) {
+            if (c->Handle) SendMessageW(c->Handle, BM_SETCHECK,
+                st == CheckState::Checked ? BST_CHECKED : st == CheckState::Indeterminate ? BST_INDETERMINATE : BST_UNCHECKED, 0);
+            return *this;
+        }
+        operator CheckState() const {
+            if (!c->Handle) return CheckState::Unchecked;
+            LRESULT r = SendMessageW(c->Handle, BM_GETCHECK, 0, 0);
+            return r == BST_CHECKED ? CheckState::Checked : r == BST_INDETERMINATE ? CheckState::Indeterminate : CheckState::Unchecked;
+        }
+    } CheckState{ this };
+    // ThreeState (Faz 2.6): BS_AUTO3STATE stiline gecer — Indeterminate desteklenir
+    class ThreeStateProp {
+        Control* c;
+    public:
+        explicit ThreeStateProp(Control* o) : c(o) {}
+        ThreeStateProp& operator=(bool v) {
+            if (c->Handle) RestyleWindow(c->Handle, v ? BS_AUTO3STATE : BS_AUTOCHECKBOX,
+                                                v ? BS_AUTOCHECKBOX : BS_AUTO3STATE);
+            return *this;
+        }
+    } ThreeState{ this };
+    // Appearance (Faz 2.6): Normal | Button (BS_PUSHLIKE)
+    class AppearanceProp {
+        Control* c;
+    public:
+        explicit AppearanceProp(Control* o) : c(o) {}
+        AppearanceProp& operator=(const wchar_t* ap) {
+            if (c->Handle) {
+                bool btn = (_wcsicmp(ap, L"Button") == 0);
+                RestyleWindow(c->Handle, btn ? BS_PUSHLIKE : 0, btn ? 0 : BS_PUSHLIKE);
+            }
+            return *this;
+        }
+    } Appearance{ this };
+    void SetThreeState(bool v) { ThreeState = v; }
+    bool GetThreeState() const {
+        return c3s();
+    }
+    bool c3s() const {
+        if (!Handle) return false;
+        return (GetWindowLongPtrW(Handle, GWL_STYLE) & BS_AUTO3STATE) != 0;
+    }
+};
+
+class RadioButton : public CheckBox {
+public:
+    RadioButton(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h)
+        : CheckBox(parent, id, text, x, y, w, h) {
+        if (Handle) {
+            // stili radio'ya cevir (CreateWindow sonrasi stil degisimi guvenli)
+            LONG_PTR st = GetWindowLongPtrW(Handle, GWL_STYLE);
+            SetWindowLongPtrW(Handle, GWL_STYLE, (st & ~BS_AUTOCHECKBOX) | BS_AUTORADIOBUTTON);
+        }
+    }
+};
+
+// ============================================================================
+//  GroupBox / Label / LinkLabel
+// ============================================================================
+class GroupBox : public Control {
+public:
+    GroupBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"BUTTON", text.c_str(),
+            BS_GROUPBOX | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+};
+
+class Label : public Control {
+public:
+    Label(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"STATIC", text.c_str(),
+            SS_LEFT | SS_NOTIFY | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // Win32 STATIC otomatik buyumez: AutoSize atamasi bilgi amaclidir.
+    // Istenen davranis icin Size = M2God::Size(genislik, yukseklik) kullanin.
+    class AutoSizeProp {
+        Control* c;
+    public:
+        explicit AutoSizeProp(Control* o) : c(o) {}
+        AutoSizeProp& operator=(bool v) { (void)v; return *this; }
+        operator bool() const { return false; }
+    } AutoSize{ this };
+    class BorderStyleProp {
+        Control* c;
+    public:
+        explicit BorderStyleProp(Control* o) : c(o) {}
+        BorderStyleProp& operator=(M2God::BorderStyle b) {
+            if (!c->Handle) return *this;
+            switch (b) {
+            case M2God::BorderStyle::None:        RestyleWindow(c->Handle, 0, WS_BORDER, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::FixedSingle: RestyleWindow(c->Handle, WS_BORDER, 0, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::Fixed3D:     RestyleWindow(c->Handle, 0, WS_BORDER, WS_EX_CLIENTEDGE, 0); break;
+            }
+            return *this;
+        }
+    } BorderStyle{ this };
+    class TextAlignProp {
+        Control* c;
+    public:
+        explicit TextAlignProp(Control* o) : c(o) {}
+        TextAlignProp& operator=(ContentAlignment a) {
+            if (!c->Handle) return *this;
+            LONG_PTR add, rem = SS_TYPEMASK;
+            switch (a) {
+            case ContentAlignment::MiddleCenter:
+            case ContentAlignment::BottomCenter:
+            case ContentAlignment::TopCenter:    add = SS_CENTER; break;
+            case ContentAlignment::MiddleRight:
+            case ContentAlignment::TopRight:
+            case ContentAlignment::BottomRight:  add = SS_RIGHT; break;
+            default:                             add = SS_LEFT; break;
+            }
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } TextAlign{ this };
+    class AutoEllipsisProp {
+        Control* c;
+    public:
+        explicit AutoEllipsisProp(Control* o) : c(o) {}
+        AutoEllipsisProp& operator=(bool v) {
+            if (c->Handle) RestyleWindow(c->Handle, v ? SS_ENDELLIPSIS : 0, v ? 0 : SS_ENDELLIPSIS);
+            return *this;
+        }
+    } AutoEllipsis{ this };
+};
+
+class LinkLabel : public Control {
+public:
+    LinkLabel(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"STATIC", text.c_str(),
+            SS_LEFT | SS_NOTIFY | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) {
+            SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+            CtrlColorInfo(Handle).fore = RGB(0, 0, 255);   // link mavisi
+        }
+    }
+    bool LinkVisited = false;   // bilgi amacli (Ziyaret edildi rengi icin)
+};
+
+// ============================================================================
+//  TextBox (MaskedTextBox da bu siniftir)
+// ============================================================================
+class TextBox : public Control {
+public:
+    TextBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h, bool multiline = false) {
+        DWORD st = WS_BORDER | WS_TABSTOP | WS_CHILD | WS_VISIBLE;
+        if (multiline) st |= ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL;
+        else st |= ES_AUTOHSCROLL;
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text.c_str(), st, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // textBox1->ReadOnly = true;
+    class ReadOnlyProp {
+        Control* c;
+    public:
+        explicit ReadOnlyProp(Control* o) : c(o) {}
+        ReadOnlyProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, EM_SETREADONLY, v ? TRUE : FALSE, 0); return *this; }
+        operator bool() const { return c->Handle && (GetWindowLongW(c->Handle, GWL_STYLE) & ES_READONLY) != 0; }
+    } ReadOnly{ this };
+    // textBox1->PasswordChar = L'*';
+    class PasswordCharProp {
+        Control* c;
+    public:
+        explicit PasswordCharProp(Control* o) : c(o) {}
+        PasswordCharProp& operator=(wchar_t ch) {
+            if (c->Handle) { SendMessageW(c->Handle, EM_SETPASSWORDCHAR, (WPARAM)ch, 0); InvalidateRect(c->Handle, nullptr, TRUE); }
+            return *this;
+        }
+        operator wchar_t() const {
+            return c->Handle ? (wchar_t)SendMessageW(c->Handle, EM_GETPASSWORDCHAR, 0, 0) : (wchar_t)0;
+        }
+    } PasswordChar{ this };
+    class MaxLengthProp {
+        Control* c;
+    public:
+        explicit MaxLengthProp(Control* o) : c(o) {}
+        MaxLengthProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, EM_SETLIMITTEXT, (WPARAM)v, 0); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, EM_GETLIMITTEXT, 0, 0) : 0; }
+    } MaxLength{ this };
+    class TextAlignProp {
+        Control* c;
+    public:
+        explicit TextAlignProp(Control* o) : c(o) {}
+        TextAlignProp& operator=(HorizontalAlignment a) {
+            if (!c->Handle) return *this;
+            LONG_PTR add, rem = ES_LEFT | ES_CENTER | ES_RIGHT;
+            switch (a) {
+            case HorizontalAlignment::Center: add = ES_CENTER; break;
+            case HorizontalAlignment::Right:  add = ES_RIGHT; break;
+            default:                          add = ES_LEFT; break;
+            }
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } TextAlign{ this };
+    class CharacterCasingProp {
+        Control* c;
+    public:
+        explicit CharacterCasingProp(Control* o) : c(o) {}
+        CharacterCasingProp& operator=(CharacterCasing v) {
+            if (!c->Handle) return *this;
+            LONG_PTR add, rem = ES_UPPERCASE | ES_LOWERCASE;
+            switch (v) {
+            case CharacterCasing::Upper: add = ES_UPPERCASE; break;
+            case CharacterCasing::Lower: add = ES_LOWERCASE; break;
+            default:                     add = 0; break;
+            }
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } CharacterCasing{ this };
+    class UseSystemPasswordCharProp {
+        Control* c;
+    public:
+        explicit UseSystemPasswordCharProp(Control* o) : c(o) {}
+        UseSystemPasswordCharProp& operator=(bool v) {
+            if (c->Handle) { SendMessageW(c->Handle, EM_SETPASSWORDCHAR, v ? (WPARAM)L'\u25CF' : 0, 0); InvalidateRect(c->Handle, nullptr, TRUE); }
+            return *this;
+        }
+    } UseSystemPasswordChar{ this };
+    // Multiline: yaratma sirasinda belirlenir (ES_MULTILINE); sonradan bilgi amacli
+    class MultiLineProp {
+        Control* c;
+    public:
+        explicit MultiLineProp(Control* o) : c(o) {}
+        MultiLineProp& operator=(bool v) { (void)v; return *this; }
+        operator bool() const {
+            return c->Handle && (GetWindowLongW(c->Handle, GWL_STYLE) & ES_MULTILINE) != 0;
+        }
+    } MultiLine{ this };
+    // WordWrap: multiline EDIT'te yatay kaydirma stilidir; bilgi amacli
+    class WordWrapProp {
+        Control* c;
+    public:
+        explicit WordWrapProp(Control* o) : c(o) {}
+        WordWrapProp& operator=(bool v) {
+            if (c->Handle && (GetWindowLongW(c->Handle, GWL_STYLE) & ES_MULTILINE))
+                RestyleWindow(c->Handle, v ? 0 : (LONG_PTR)WS_HSCROLL, v ? (LONG_PTR)WS_HSCROLL : 0);
+            return *this;
+        }
+    } WordWrap{ this };
+    // ---- BorderStyle (Faz 2.6) ----
+    class BorderStyleProp {
+        Control* c;
+    public:
+        explicit BorderStyleProp(Control* o) : c(o) {}
+        BorderStyleProp& operator=(M2God::BorderStyle b) {
+            if (!c->Handle) return *this;
+            switch (b) {
+            case M2God::BorderStyle::None:        RestyleWindow(c->Handle, 0, WS_BORDER, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::FixedSingle: RestyleWindow(c->Handle, WS_BORDER, 0, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::Fixed3D:     RestyleWindow(c->Handle, 0, WS_BORDER, WS_EX_CLIENTEDGE, 0); break;
+            }
+            return *this;
+        }
+    } BorderStyle{ this };
+    // ---- ScrollBars (Faz 2.6 — multiline edit'te gecerli) ----
+    // None=0, Horizontal=1, Vertical=2, Both=3 (WinForms TextBoxScrollBars)
+    class ScrollBarsProp {
+        Control* c;
+    public:
+        explicit ScrollBarsProp(Control* o) : c(o) {}
+        ScrollBarsProp& operator=(int v) {
+            if (!c->Handle) return *this;
+            LONG_PTR add = 0, rem = 0;
+            if (v & 1) add |= WS_HSCROLL; else rem |= WS_HSCROLL;
+            if (v & 2) add |= WS_VSCROLL; else rem |= WS_VSCROLL;
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } ScrollBars{ this };
+
+    // ---- metotlar ----
+    void AppendText(const std::wstring& s) {
+        if (!Handle) return;
+        int len = GetWindowTextLengthW(Handle);
+        SendMessageW(Handle, EM_SETSEL, (WPARAM)len, (LPARAM)len);
+        SendMessageW(Handle, EM_REPLACESEL, FALSE, (LPARAM)s.c_str());
+    }
+    void Clear()     { if (Handle) SetWindowTextW(Handle, L""); }
+    void Copy()      { if (Handle) SendMessageW(Handle, WM_COPY, 0, 0); }
+    void Cut()       { if (Handle) SendMessageW(Handle, WM_CUT, 0, 0); }
+    void Paste()     { if (Handle) SendMessageW(Handle, WM_PASTE, 0, 0); }
+    void Undo()      { if (Handle) SendMessageW(Handle, EM_UNDO, 0, 0); }
+    void SelectAll() { if (Handle) SendMessageW(Handle, EM_SETSEL, 0, -1); }
+    void ScrollToCaret() { if (Handle) SendMessageW(Handle, EM_SCROLLCARET, 0, 0); }
+    int  GetLineCount()  { return Handle ? (int)SendMessageW(Handle, EM_GETLINECOUNT, 0, 0) : 0; }
+};
+
+// MaskedTextBox — Win32 EDIT ile uygulanir; Mask/PromptChar bilgi amacli saklanir
+class MaskedTextBox : public TextBox {
+public:
+    std::wstring Mask;        // or: L"00-00" (dogrulama kullaniciya aittir)
+    wchar_t PromptChar = L'_';
+    std::wstring TextMaskFormat = L"IncludeLiterals";
+    MaskedTextBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h, bool = false)
+        : TextBox(parent, id, text, x, y, w, h, false) {}
+};
+
+// ============================================================================
+//  NumericUpDown — EDIT + msctls_updown32 (gercek ok butonlari)
+// ============================================================================
+class NumericUpDown : public Control {
+public:
+    HWND Buddy = NULL;      // EDIT
+    HWND UpDown = NULL;     // msctls_updown32
+    int  IncrementValue = 1;
+    int  MinValue = 0, MaxValue = 100;
+    int  DecimalPlacesStored = 0;
+    bool HexadecimalStored = false;
+
+    NumericUpDown(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h, bool = false) {
+        Buddy = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", text.c_str(),
+            WS_BORDER | WS_TABSTOP | WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Handle = Buddy;
+        Id = id;
+        if (Buddy) SendMessageW(Buddy, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+        UpDown = CreateWindowExW(0, L"msctls_updown32", L"",
+            WS_CHILD | WS_VISIBLE | UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_AUTOBUDDY | UDS_HOTTRACK,
+            0, 0, 18, h, parent, (HMENU)(INT_PTR)(id + 50000), GetModuleHandleW(nullptr), nullptr);
+        if (UpDown) {
+            SendMessageW(UpDown, UDM_SETRANGE32, 0, 100);
+            SendMessageW(UpDown, UDM_SETPOS32, 0, _wtoi(text.c_str()));
+        }
+    }
+    // numericUpDown1->Value = 5;
+    class ValueProp {
+        NumericUpDown* c;
+    public:
+        explicit ValueProp(NumericUpDown* o) : c(o) {}
+        ValueProp& operator=(int v) {
+            if (v < c->MinValue) v = c->MinValue;
+            if (v > c->MaxValue) v = c->MaxValue;
+            if (c->UpDown) SendMessageW(c->UpDown, UDM_SETPOS32, 0, (LPARAM)v);
+            else if (c->Buddy) { wchar_t b[32]; swprintf(b, 32, L"%d", v); SetWindowTextW(c->Buddy, b); }
+            return *this;
+        }
+        operator int() const {
+            if (c->UpDown) return (int)SendMessageW(c->UpDown, UDM_GETPOS32, 0, 0);
+            wchar_t b[32] = L""; if (c->Buddy) GetWindowTextW(c->Buddy, b, 32);
+            return _wtoi(b);
+        }
+    } Value{ this };
+    class MinimumProp {
+        NumericUpDown* c;
+    public:
+        explicit MinimumProp(NumericUpDown* o) : c(o) {}
+        MinimumProp& operator=(int v) { c->MinValue = v; if (c->UpDown) { int mx = c->MaxValue; SendMessageW(c->UpDown, UDM_SETRANGE32, (WPARAM)v, (LPARAM)mx); } return *this; }
+        operator int() const { return c->MinValue; }
+    } Minimum{ this };
+    class MaximumProp {
+        NumericUpDown* c;
+    public:
+        explicit MaximumProp(NumericUpDown* o) : c(o) {}
+        MaximumProp& operator=(int v) { c->MaxValue = v; if (c->UpDown) { int mn = c->MinValue; SendMessageW(c->UpDown, UDM_SETRANGE32, (WPARAM)mn, (LPARAM)v); } return *this; }
+        operator int() const { return c->MaxValue; }
+    } Maximum{ this };
+    class IncrementProp {
+        NumericUpDown* c;
+    public:
+        explicit IncrementProp(NumericUpDown* o) : c(o) {}
+        IncrementProp& operator=(int v) { c->IncrementValue = v > 0 ? v : 1; return *this; }
+        operator int() const { return c->IncrementValue; }
+    } Increment{ this };
+    class ReadOnlyProp {
+        Control* c;
+    public:
+        explicit ReadOnlyProp(Control* o) : c(o) {}
+        ReadOnlyProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, EM_SETREADONLY, v ? TRUE : FALSE, 0); return *this; }
+        operator bool() const { return c->Handle && (GetWindowLongW(c->Handle, GWL_STYLE) & ES_READONLY) != 0; }
+    } ReadOnly{ this };
+    class HexadecimalProp {
+        NumericUpDown* c;
+    public:
+        explicit HexadecimalProp(NumericUpDown* o) : c(o) {}
+        HexadecimalProp& operator=(bool v) { c->HexadecimalStored = v; return *this; }
+        operator bool() const { return c->HexadecimalStored; }
+    } Hexadecimal{ this };
+    void UpButton()   { int v = (int)Value + c()->IncrementValue; Value = v; }
+    void DownButton() { int v = (int)Value - c()->IncrementValue; Value = v; }
+private:
+    NumericUpDown* c() { return this; }
+};
+
+// ============================================================================
+//  RichTextBox — RichEdit20W (RTF + metotlar)
+// ============================================================================
+class RichTextBox : public Control {
+public:
+    RichTextBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        EnsureRichEdit();
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"RichEdit20W", text.c_str(),
+            WS_BORDER | WS_TABSTOP | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_CHILD | WS_VISIBLE,
+            x, y, w, h, parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    class ReadOnlyProp {
+        Control* c;
+    public:
+        explicit ReadOnlyProp(Control* o) : c(o) {}
+        ReadOnlyProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, EM_SETREADONLY, v ? TRUE : FALSE, 0); return *this; }
+        operator bool() const { return c->Handle && (GetWindowLongW(c->Handle, GWL_STYLE) & ES_READONLY) != 0; }
+    } ReadOnly{ this };
+    class MaxLengthProp {
+        Control* c;
+    public:
+        explicit MaxLengthProp(Control* o) : c(o) {}
+        MaxLengthProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, EM_EXLIMITTEXT, 0, (LPARAM)v); return *this; }
+    } MaxLength{ this };
+    // Secili metnin rengi
+    class SelectionColorProp {
+        RichTextBox* c;
+    public:
+        explicit SelectionColorProp(RichTextBox* o) : c(o) {}
+        SelectionColorProp& operator=(COLORREF cr) {
+            if (!c->Handle) return *this;
+            CHARFORMATW cf; ZeroMemory(&cf, sizeof(cf));
+            cf.cbSize = sizeof(cf);
+            cf.dwMask = CFM_COLOR;
+            cf.crTextColor = cr;
+            SendMessageW(c->Handle, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
+            return *this;
+        }
+    } SelectionColor{ this };
+    // Secili metin
+    class SelectedTextProp {
+        RichTextBox* c;
+    public:
+        explicit SelectedTextProp(RichTextBox* o) : c(o) {}
+        SelectedTextProp& operator=(const std::wstring& s) {
+            if (c->Handle) SendMessageW(c->Handle, EM_REPLACESEL, TRUE, (LPARAM)s.c_str());
+            return *this;
+        }
+        operator std::wstring() const {
+            if (!c->Handle) return L"";
+            wchar_t buf[1024] = L"";
+            SendMessageW(c->Handle, EM_GETSELTEXT, 0, (LPARAM)buf);
+            return std::wstring(buf);
+        }
+    } SelectedText{ this };
+    // --- Faz 2.6: WordWrap / DetectUrls / ZoomFactor ---
+    class WordWrapProp {
+        Control* c;
+    public:
+        explicit WordWrapProp(Control* o) : c(o) {}
+        WordWrapProp& operator=(bool v) {
+            if (c->Handle) {
+                HDC dc = GetDC(c->Handle);
+                // 0 = kaydirma yok; satir genisligi = istemci genisligi (sarmala)
+                SendMessageW(c->Handle, EM_SETTARGETDEVICE, (WPARAM)dc, v ? 0 : 20000);
+                ReleaseDC(c->Handle, dc);
+            }
+            return *this;
+        }
+    } WordWrap{ this };
+    class DetectUrlsProp {
+        Control* c;
+    public:
+        explicit DetectUrlsProp(Control* o) : c(o) {}
+        DetectUrlsProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, EM_AUTOURLDETECT, v ? 1 : 0, 0); return *this; }
+    } DetectUrls{ this };
+    class ZoomFactorProp {
+        Control* c;
+    public:
+        explicit ZoomFactorProp(Control* o) : c(o) {}
+        // WinForms: 1.0 = %100 (0.125 .. 64.0)
+        ZoomFactorProp& operator=(double z) { if (c->Handle) SendMessageW(c->Handle, EM_SETZOOM, (WPARAM)(int)(z * 64), (LPARAM)64); return *this; }
+        operator double() const {
+            if (!c->Handle) return 1.0;
+            int num = 0, den = 0;
+            LRESULT r = SendMessageW(c->Handle, EM_GETZOOM, (WPARAM)&num, (LPARAM)&den);
+            (void)r;
+            return den ? (double)num / (double)den : 1.0;
+        }
+    } ZoomFactor{ this };
+    // BackColor — RichEdit WM_CTLCOLOR gondermez; EM_SETBKCOLOR kullanir
+    virtual void OnBackColorChanged() override {
+        if (Handle) SendMessageW(Handle, EM_SETBKCOLOR, 0, (LPARAM)CtrlColorInfo(Handle).back);
+    }
+    virtual void OnForeColorChanged() override {
+        if (!Handle) return;
+        CHARFORMATW cf; ZeroMemory(&cf, sizeof(cf));
+        cf.cbSize = sizeof(cf);
+        cf.dwMask = CFM_COLOR;
+        cf.crTextColor = CtrlColorInfo(Handle).fore;
+        SendMessageW(Handle, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+    }
+
+    void AppendText(const std::wstring& s) {
+        if (!Handle) return;
+        CHARRANGE cr; cr.cpMin = cr.cpMax = -1;
+        SendMessageW(Handle, EM_EXSETSEL, 0, (LPARAM)&cr);
+        SendMessageW(Handle, EM_REPLACESEL, FALSE, (LPARAM)s.c_str());
+    }
+    void Clear()     { if (Handle) SetWindowTextW(Handle, L""); }
+    void Copy()      { if (Handle) SendMessageW(Handle, WM_COPY, 0, 0); }
+    void Cut()       { if (Handle) SendMessageW(Handle, WM_CUT, 0, 0); }
+    void Paste()     { if (Handle) SendMessageW(Handle, WM_PASTE, 0, 0); }
+    void Undo()      { if (Handle) SendMessageW(Handle, EM_UNDO, 0, 0); }
+    void Redo()      { if (Handle) SendMessageW(Handle, EM_REDO, 0, 0); }
+    void SelectAll() { if (Handle) { CHARRANGE cr; cr.cpMin = 0; cr.cpMax = -1; SendMessageW(Handle, EM_EXSETSEL, 0, (LPARAM)&cr); } }
+    // Dosya kaydet/yukle — RTF (EM_STREAM) veya duz metin
+    static DWORD CALLBACK M2OutStreamCb(DWORD_PTR cookie, LPBYTE pb, LONG cb, LONG* pcb) {
+        HANDLE hf = (HANDLE)(INT_PTR)cookie;
+        DWORD wr = 0;
+        if (cb > 0 && hf && hf != INVALID_HANDLE_VALUE) WriteFile(hf, pb, (DWORD)cb, &wr, nullptr);
+        if (pcb) *pcb = cb;
+        return 0;
+    }
+    struct InCtx { std::vector<char> data; size_t pos = 0; };
+    static DWORD CALLBACK M2InStreamCb(DWORD_PTR cookie, LPBYTE pb, LONG cb, LONG* pcb) {
+        InCtx* ctx = (InCtx*)cookie;
+        LONG n = (LONG)(ctx->data.size() - ctx->pos);
+        if (n > cb) n = cb;
+        if (n > 0) { memcpy(pb, ctx->data.data() + ctx->pos, (size_t)n); ctx->pos += (size_t)n; }
+        if (pcb) *pcb = n;
+        return 0;
+    }
+    void SaveFile(const std::wstring& path, RichTextBoxStreamType type = RichTextBoxStreamType::RichText) {
+        if (!Handle) return;
+        HANDLE hf = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hf == INVALID_HANDLE_VALUE) return;
+        bool rtf = (type == RichTextBoxStreamType::RichText);
+        if (rtf) {
+            EDITSTREAM es; ZeroMemory(&es, sizeof(es));
+            es.dwCookie = (DWORD_PTR)(INT_PTR)hf;
+            es.pfnCallback = &M2OutStreamCb;
+            SendMessageW(Handle, EM_STREAMOUT, (WPARAM)SF_RTF, (LPARAM)&es);
+        } else {
+            int n = GetWindowTextLengthW(Handle);
+            std::vector<wchar_t> buf((size_t)n + 2, 0);
+            GetWindowTextW(Handle, buf.data(), n + 1);
+            DWORD wr = 0;
+            WriteFile(hf, "\xFF\xFE", 2, &wr, nullptr);                       // UTF-16 BOM
+            WriteFile(hf, buf.data(), (DWORD)(n * sizeof(wchar_t)), &wr, nullptr);
+        }
+        CloseHandle(hf);
+    }
+    void LoadFile(const std::wstring& path, RichTextBoxStreamType type = RichTextBoxStreamType::RichText) {
+        if (!Handle) return;
+        HANDLE hf = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hf == INVALID_HANDLE_VALUE) return;
+        bool rtf = (type == RichTextBoxStreamType::RichText);
+        DWORD sz = GetFileSize(hf, nullptr), rd = 0;
+        std::vector<char> data((size_t)sz + 1, 0);
+        ReadFile(hf, data.data(), sz, &rd, nullptr);
+        CloseHandle(hf);
+        if (rtf) {
+            InCtx ctx; ctx.data.swap(data);
+            EDITSTREAM es; ZeroMemory(&es, sizeof(es));
+            es.dwCookie = (DWORD_PTR)&ctx;
+            es.pfnCallback = &M2InStreamCb;
+            SendMessageW(Handle, EM_STREAMIN, (WPARAM)SF_RTF, (LPARAM)&es);
+        } else {
+            // UTF-16 BOM varsa dogrudan; degilse UTF-8/ANSI cevir
+            std::wstring txt;
+            if (sz >= 2 && data[0] == (char)0xFF && data[1] == (char)0xFE)
+                txt.assign((const wchar_t*)(data.data() + 2), (size_t)((sz - 2) / 2));
+            else {
+                int wl = MultiByteToWideChar(CP_UTF8, 0, data.data(), (int)sz, nullptr, 0);
+                txt.resize((size_t)(wl > 0 ? wl : 0));
+                if (wl > 0) MultiByteToWideChar(CP_UTF8, 0, data.data(), (int)sz, &txt[0], wl);
+            }
+            SetWindowTextW(Handle, txt.c_str());
+        }
+    }
+};
+
+// ============================================================================
+//  ComboBox
+// ============================================================================
+class ComboBox : public Control {
+public:
+    ComboBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"COMBOBOX", text.c_str(),
+            WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // comboBox1->Items->Add(L"...");  Items->SelectedIndex = 0;  Items->Count
+    class ItemsProp {
+        ComboBox* c;
+    public:
+        explicit ItemsProp(ComboBox* o) : c(o) {}
+        ItemsProp* operator->() { return this; }
+        void Clear() { if (c->Handle) SendMessageW(c->Handle, CB_RESETCONTENT, 0, 0); }
+        void Add(const std::wstring& s) { if (c->Handle) SendMessageW(c->Handle, CB_ADDSTRING, 0, (LPARAM)s.c_str()); }
+        void AddRange(std::initializer_list<const wchar_t*> ls) { for (auto* s : ls) Add(s); }
+        void AddRange(const std::vector<std::wstring>& ls) { for (auto& s : ls) Add(s); }
+        void Insert(int i, const std::wstring& s) { if (c->Handle) SendMessageW(c->Handle, CB_INSERTSTRING, (WPARAM)i, (LPARAM)s.c_str()); }
+        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, CB_DELETESTRING, (WPARAM)i, 0); }
+        int  GetCount() const { return c->Handle ? (int)SendMessageW(c->Handle, CB_GETCOUNT, 0, 0) : 0; }
+        bool Contains(const std::wstring& s) const { return IndexOf(s) >= 0; }
+        int  IndexOf(const std::wstring& s) const {
+            return c->Handle ? (int)SendMessageW(c->Handle, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)s.c_str()) : -1;
+        }
+        std::wstring GetItem(int i) const {
+            if (!c->Handle || i < 0 || i >= GetCount()) return L"";
+            wchar_t buf[256] = L"";
+            SendMessageW(c->Handle, CB_GETLBTEXT, (WPARAM)i, (LPARAM)buf);
+            return buf;
+        }
+        int  GetSelectedIndex() const { return c->Handle ? (int)SendMessageW(c->Handle, CB_GETCURSEL, 0, 0) : -1; }
+        void SetSelectedIndex(int i) { if (c->Handle) SendMessageW(c->Handle, CB_SETCURSEL, (WPARAM)i, 0); }
+        std::wstring GetSelectedItem() const { return GetItem(GetSelectedIndex()); }
+        void BeginUpdate() { if (c->Handle) SendMessageW(c->Handle, WM_SETREDRAW, FALSE, 0); }
+        void EndUpdate()   { if (c->Handle) { SendMessageW(c->Handle, WM_SETREDRAW, TRUE, 0); InvalidateRect(c->Handle, nullptr, TRUE); } }
+        class SelIdxProp {
+            ItemsProp* p;
+        public:
+            explicit SelIdxProp(ItemsProp* o) : p(o) {}
+            SelIdxProp& operator=(int i) { p->SetSelectedIndex(i); return *this; }
+            operator int() const { return p->GetSelectedIndex(); }
+        } SelectedIndex{ this };
+        class SelItemProp {
+            ItemsProp* p;
+        public:
+            explicit SelItemProp(ItemsProp* o) : p(o) {}
+            operator std::wstring() const { return p->GetSelectedItem(); }
+        } SelectedItem{ this };
+        class CountProp {
+            ItemsProp* p;
+        public:
+            explicit CountProp(ItemsProp* o) : p(o) {}
+            operator int() const { return p->GetCount(); }
+        } Count{ this };
+    } Items{ this };
+    // comboBox1->DropDownStyle = M2God::ComboBoxStyle::DropDownList;
+    class DropDownStyleProp {
+        Control* c;
+    public:
+        explicit DropDownStyleProp(Control* o) : c(o) {}
+        DropDownStyleProp& operator=(M2God::ComboBoxStyle v) {
+            if (!c->Handle) return *this;
+            LONG_PTR add, rem = CBS_SIMPLE | CBS_DROPDOWN | CBS_DROPDOWNLIST;
+            switch (v) {
+            case M2God::ComboBoxStyle::Simple:         add = CBS_SIMPLE; break;
+            case M2God::ComboBoxStyle::DropDown:       add = CBS_DROPDOWN; break;
+            default:                                   add = CBS_DROPDOWNLIST; break;
+            }
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } DropDownStyle{ this };
+    class DroppedDownProp {
+        Control* c;
+    public:
+        explicit DroppedDownProp(Control* o) : c(o) {}
+        DroppedDownProp& operator=(bool v) { if (c->Handle) SendMessageW(c->Handle, CB_SHOWDROPDOWN, v ? TRUE : FALSE, 0); return *this; }
+        operator bool() const { return c->Handle && SendMessageW(c->Handle, CB_GETDROPPEDSTATE, 0, 0) != 0; }
+    } DroppedDown{ this };
+    class MaxLengthProp {
+        Control* c;
+    public:
+        explicit MaxLengthProp(Control* o) : c(o) {}
+        MaxLengthProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, CB_LIMITTEXT, (WPARAM)v, 0); return *this; }
+    } MaxLength{ this };
+    bool Sorted = false;            // yaratma sirasinda etkili (LBS_SORT/CBS_SORT)
+    void BeginUpdate() { if (Handle) SendMessageW(Handle, WM_SETREDRAW, FALSE, 0); }
+    void EndUpdate()   { if (Handle) { SendMessageW(Handle, WM_SETREDRAW, TRUE, 0); InvalidateRect(Handle, nullptr, TRUE); } }
+};
+
+// ============================================================================
+//  ListBox
+// ============================================================================
+class ListBox : public Control {
+public:
+    ListBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"LISTBOX", text.c_str(),
+            WS_BORDER | WS_VSCROLL | LBS_NOTIFY | WS_CHILD | WS_VISIBLE | WS_TABSTOP, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    class ItemsProp {
+        ListBox* c;
+    public:
+        explicit ItemsProp(ListBox* o) : c(o) {}
+        ItemsProp* operator->() { return this; }
+        void Clear() { if (c->Handle) SendMessageW(c->Handle, LB_RESETCONTENT, 0, 0); }
+        void Add(const std::wstring& s) { if (c->Handle) SendMessageW(c->Handle, LB_ADDSTRING, 0, (LPARAM)s.c_str()); }
+        void AddRange(std::initializer_list<const wchar_t*> ls) { for (auto* s : ls) Add(s); }
+        void AddRange(const std::vector<std::wstring>& ls) { for (auto& s : ls) Add(s); }
+        void Insert(int i, const std::wstring& s) { if (c->Handle) SendMessageW(c->Handle, LB_INSERTSTRING, (WPARAM)i, (LPARAM)s.c_str()); }
+        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, LB_DELETESTRING, (WPARAM)i, 0); }
+        int  GetCount() const { return c->Handle ? (int)SendMessageW(c->Handle, LB_GETCOUNT, 0, 0) : 0; }
+        bool Contains(const std::wstring& s) const { return IndexOf(s) >= 0; }
+        int  IndexOf(const std::wstring& s) const {
+            return c->Handle ? (int)SendMessageW(c->Handle, LB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)s.c_str()) : -1;
+        }
+        std::wstring GetItem(int i) const {
+            if (!c->Handle || i < 0 || i >= GetCount()) return L"";
+            wchar_t buf[256] = L"";
+            SendMessageW(c->Handle, LB_GETTEXT, (WPARAM)i, (LPARAM)buf);
+            return buf;
+        }
+        int  GetSelectedIndex() const { return c->Handle ? (int)SendMessageW(c->Handle, LB_GETCURSEL, 0, 0) : -1; }
+        void SetSelectedIndex(int i) { if (c->Handle) SendMessageW(c->Handle, LB_SETCURSEL, (WPARAM)i, 0); }
+        std::wstring GetSelectedItem() const { return GetItem(GetSelectedIndex()); }
+        void BeginUpdate() { if (c->Handle) SendMessageW(c->Handle, WM_SETREDRAW, FALSE, 0); }
+        void EndUpdate()   { if (c->Handle) { SendMessageW(c->Handle, WM_SETREDRAW, TRUE, 0); InvalidateRect(c->Handle, nullptr, TRUE); } }
+        class SelIdxProp {
+            ItemsProp* p;
+        public:
+            explicit SelIdxProp(ItemsProp* o) : p(o) {}
+            SelIdxProp& operator=(int i) { p->SetSelectedIndex(i); return *this; }
+            operator int() const { return p->GetSelectedIndex(); }
+        } SelectedIndex{ this };
+        class SelItemProp {
+            ItemsProp* p;
+        public:
+            explicit SelItemProp(ItemsProp* o) : p(o) {}
+            operator std::wstring() const { return p->GetSelectedItem(); }
+        } SelectedItem{ this };
+        class CountProp {
+            ItemsProp* p;
+        public:
+            explicit CountProp(ItemsProp* o) : p(o) {}
+            operator int() const { return p->GetCount(); }
+        } Count{ this };
+    } Items{ this };
+    // Coklu secim (SelectionMode::MultiSimple/MultiExtended icin yaratma stili gereklidir)
+    class SelectionModeProp {
+        Control* c;
+    public:
+        explicit SelectionModeProp(Control* o) : c(o) {}
+        SelectionModeProp& operator=(M2God::SelectionMode v) {
+            if (c->Handle)
+                RestyleWindow(c->Handle,
+                    (v == M2God::SelectionMode::MultiSimple || v == M2God::SelectionMode::MultiExtended) ? LBS_MULTIPLESEL | LBS_EXTENDEDSEL : 0,
+                    (v == M2God::SelectionMode::MultiSimple || v == M2God::SelectionMode::MultiExtended) ? 0 : (LBS_MULTIPLESEL | LBS_EXTENDEDSEL));
+            return *this;
+        }
+    } SelectionMode{ this };
+    class TopIndexProp {
+        Control* c;
+    public:
+        explicit TopIndexProp(Control* o) : c(o) {}
+        TopIndexProp& operator=(int i) { if (c->Handle) SendMessageW(c->Handle, LB_SETTOPINDEX, (WPARAM)i, 0); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, LB_GETTOPINDEX, 0, 0) : 0; }
+    } TopIndex{ this };
+    class ItemHeightProp {
+        Control* c;
+    public:
+        explicit ItemHeightProp(Control* o) : c(o) {}
+        ItemHeightProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, LB_SETITEMHEIGHT, 0, MAKELPARAM(v, 0)); return *this; }
+        operator int() const { if (!c->Handle) return 0; LONG r = SendMessageW(c->Handle, LB_GETITEMHEIGHT, 0, 0); return (int)r; }
+    } ItemHeight{ this };
+    bool Sorted = false;
+    void ClearSelected() { if (Handle) SendMessageW(Handle, LB_SETSEL, FALSE, (LPARAM)-1); }
+    bool GetSelected(int i) const { return Handle && SendMessageW(Handle, LB_GETSEL, (WPARAM)i, 0) > 0; }
+    void SetSelected(int i, bool v) { if (Handle) SendMessageW(Handle, LB_SETSEL, v ? TRUE : FALSE, (LPARAM)i); }
+};
+
+// ============================================================================
+//  CheckedListBox — LVS_LIST + LVS_EX_CHECKBOXES ListView ile uygulanir
+// ============================================================================
+class CheckedListBox : public Control {
+public:
+    CheckedListBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysListView32", text.c_str(),
+            LVS_LIST | LVS_SHOWSELALWAYS | WS_BORDER | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            x, y, w, h, parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) {
+            SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+            ListView_SetExtendedListViewStyle(Handle, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        }
+    }
+    class ItemsProp {
+        CheckedListBox* c;
+    public:
+        explicit ItemsProp(CheckedListBox* o) : c(o) {}
+        ItemsProp* operator->() { return this; }
+        void Clear() { if (c->Handle) SendMessageW(c->Handle, LVM_DELETEALLITEMS, 0, 0); }
+        void Add(const std::wstring& s) {
+            if (!c->Handle) return;
+            LVITEMW li = { 0 };
+            li.mask = LVIF_TEXT;
+            li.iItem = (int)SendMessageW(c->Handle, LVM_GETITEMCOUNT, 0, 0);
+            li.pszText = (LPWSTR)s.c_str();
+            SendMessageW(c->Handle, LVM_INSERTITEMW, 0, (LPARAM)&li);
+        }
+        void AddRange(std::initializer_list<const wchar_t*> ls) { for (auto* s : ls) Add(s); }
+        void AddRange(const std::vector<std::wstring>& ls) { for (auto& s : ls) Add(s); }
+        void Insert(int i, const std::wstring& s) {
+            if (!c->Handle) return;
+            LVITEMW li = { 0 };
+            li.mask = LVIF_TEXT;
+            li.iItem = i;
+            li.pszText = (LPWSTR)s.c_str();
+            SendMessageW(c->Handle, LVM_INSERTITEMW, 0, (LPARAM)&li);
+        }
+        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, LVM_DELETEITEM, (WPARAM)i, 0); }
+        int  GetCount() const { return c->Handle ? (int)SendMessageW(c->Handle, LVM_GETITEMCOUNT, 0, 0) : 0; }
+        std::wstring GetItem(int i) const {
+            if (!c->Handle || i < 0 || i >= GetCount()) return L"";
+            wchar_t buf[256] = L"";
+            LVITEMW li = { 0 };
+            li.mask = LVIF_TEXT;
+            li.iItem = i;
+            li.pszText = buf;
+            li.cchTextMax = 256;
+            SendMessageW(c->Handle, LVM_GETITEMTEXTW, (WPARAM)i, (LPARAM)&li);
+            return buf;
+        }
+        int  GetSelectedIndex() const { return c->Handle ? (int)SendMessageW(c->Handle, LVM_GETNEXTITEM, (WPARAM)-1, MAKELPARAM(LVNI_SELECTED, 0)) : -1; }
+        std::wstring GetSelectedItem() const { return GetItem(GetSelectedIndex()); }
+        class SelIdxProp {
+            ItemsProp* p;
+        public:
+            explicit SelIdxProp(ItemsProp* o) : p(o) {}
+            SelIdxProp& operator=(int i) {
+                if (p->c->Handle) {
+                    LVITEMW li = { 0 };
+                    li.mask = LVIF_STATE;
+                    li.state = LVIS_SELECTED;
+                    li.stateMask = LVIS_SELECTED;
+                    SendMessageW(p->c->Handle, LVM_SETITEMSTATE, (WPARAM)-1, (LPARAM)&li);
+                    if (i >= 0) SendMessageW(p->c->Handle, LVM_SETITEMSTATE, (WPARAM)i, (LPARAM)&li);
+                }
+                return *this;
+            }
+            operator int() const { return p->GetSelectedIndex(); }
+        } SelectedIndex{ this };
+        class SelItemProp {
+            ItemsProp* p;
+        public:
+            explicit SelItemProp(ItemsProp* o) : p(o) {}
+            operator std::wstring() const { return p->GetSelectedItem(); }
+        } SelectedItem{ this };
+        class CountProp {
+            ItemsProp* p;
+        public:
+            explicit CountProp(ItemsProp* o) : p(o) {}
+            operator int() const { return p->GetCount(); }
+        } Count{ this };
+    } Items{ this };
+    // checkedListBox1->SetItemChecked(0, true);
+    void SetItemChecked(int i, bool v) {
+        if (!Handle || i < 0) return;
+        LVITEMW li = { 0 };
+        li.mask = LVIF_STATE;
+        li.state = INDEXTOSTATEIMAGEMASK(v ? 2 : 1);
+        li.stateMask = LVIS_STATEIMAGEMASK;
+        SendMessageW(Handle, LVM_SETITEMSTATE, (WPARAM)i, (LPARAM)&li);
+    }
+    bool GetItemChecked(int i) const {
+        if (!Handle || i < 0) return false;
+        return (SendMessageW(Handle, LVM_GETITEMSTATE, (WPARAM)i, LVIS_STATEIMAGEMASK) >> 12) == 2;
+    }
+    // Isaretli ogelerin sayisi/indeksleri
+    int CheckedItemCount() const {
+        int n = (int)Items.Count, cnt = 0;
+        for (int i = 0; i < n; i++) if (GetItemChecked(i)) cnt++;
+        return cnt;
+    }
+    bool GetItemCheckedByIndex(int i) const { return GetItemChecked(i); }
+    bool CheckOnClick = false;      // davranissal bilgi
+    bool ThreeDCheckBoxes = false;
+};
+
+// ============================================================================
+//  ListView — Columns/Items API + View/CheckBoxes/GridLines
+// ============================================================================
+class ListView : public Control {
+public:
+    ListView(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysListView32", text.c_str(),
+            LVS_REPORT | LVS_SHOWSELALWAYS | WS_BORDER | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            x, y, w, h, parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) {
+            SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+            ListView_SetExtendedListViewStyle(Handle, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+        }
+    }
+    // listView1->Columns->Add(L"Ad", 140);
+    class ColumnsProp {
+        ListView* c;
+    public:
+        explicit ColumnsProp(ListView* o) : c(o) {}
+        ColumnsProp* operator->() { return this; }
+        // FAZ 2.6.3 DÜZELTME: eski `while (LVM_DELETECOLUMN != -1)` döngüsü
+        // sonsuza döner (LVM_DELETECOLUMN başarısızlıkta -1 değil 0 döner).
+        // Güvenli yol: sütun sayısını header'dan oku, tersten sil.
+        void Clear() {
+            if (!c->Handle) return;
+            HWND hdr = (HWND)SendMessageW(c->Handle, LVM_GETHEADER, 0, 0);
+            int n = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
+            while (n > 0) {
+                SendMessageW(c->Handle, LVM_DELETECOLUMN, (WPARAM)(n - 1), 0);
+                hdr = (HWND)SendMessageW(c->Handle, LVM_GETHEADER, 0, 0);
+                n = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
+            }
+        }
+        // FAZ 2.6.3 DÜZELTME: sütun indeksi LVM_GETITEMCOUNT (SATIR sayısı)
+        // ile alınıyordu → sütunlar ters sıraya ekleniyordu. Doğrusu header sayısı.
+        void Add(const std::wstring& title, int width = 120) {
+            if (!c->Handle) return;
+            LVCOLUMNW lc = { 0 };
+            lc.mask = LVCF_TEXT | LVCF_WIDTH;
+            lc.pszText = (LPWSTR)title.c_str();
+            lc.cx = width;
+            HWND hdr = (HWND)SendMessageW(c->Handle, LVM_GETHEADER, 0, 0);
+            int n = hdr ? (int)SendMessageW(hdr, HDM_GETITEMCOUNT, 0, 0) : 0;
+            SendMessageW(c->Handle, LVM_INSERTCOLUMNW, (WPARAM)n, (LPARAM)&lc);
+        }
+        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, LVM_DELETECOLUMN, (WPARAM)i, 0); }
+        int  Count() const { return c->Handle ? Header_GetItemCount(c->Handle) : 0; }
+        void SetWidth(int i, int w) {
+            if (!c->Handle) return;
+            LVCOLUMNW lc = { 0 };
+            lc.mask = LVCF_WIDTH;
+            lc.cx = w;
+            SendMessageW(c->Handle, LVM_SETCOLUMNW, (WPARAM)i, (LPARAM)&lc);
+        }
+    } Columns{ this };
+    // listView1->Items->Add(L"satir");  Items->Add(L"ad", L"soyad");
+    class ItemsProp {
+        ListView* c;
+    public:
+        explicit ItemsProp(ListView* o) : c(o) {}
+        ItemsProp* operator->() { return this; }
+        void Clear() { if (c->Handle) SendMessageW(c->Handle, LVM_DELETEALLITEMS, 0, 0); }
+        int Add(const std::wstring& s) {
+            if (!c->Handle) return -1;
+            LVITEMW li = { 0 };
+            li.mask = LVIF_TEXT;
+            li.iItem = (int)SendMessageW(c->Handle, LVM_GETITEMCOUNT, 0, 0);
+            li.pszText = (LPWSTR)s.c_str();
+            return (int)SendMessageW(c->Handle, LVM_INSERTITEMW, 0, (LPARAM)&li);
+        }
+        int Add(const std::wstring& s, const std::wstring& sub) {
+            int idx = Add(s);
+            if (idx >= 0) SetSub(idx, 1, sub);
+            return idx;
+        }
+        int Add(const std::wstring& a, const std::wstring& b, const std::wstring& c3) {
+            int idx = Add(a, b);
+            if (idx >= 0) SetSub(idx, 2, c3);
+            return idx;
+        }
+        int Insert(int i, const std::wstring& s) {
+            if (!c->Handle) return -1;
+            LVITEMW li = { 0 };
+            li.mask = LVIF_TEXT;
+            li.iItem = i;
+            li.pszText = (LPWSTR)s.c_str();
+            return (int)SendMessageW(c->Handle, LVM_INSERTITEMW, 0, (LPARAM)&li);
+        }
+        void RemoveAt(int i) { if (c->Handle) SendMessageW(c->Handle, LVM_DELETEITEM, (WPARAM)i, 0); }
+        int  GetCount() const { return c->Handle ? (int)SendMessageW(c->Handle, LVM_GETITEMCOUNT, 0, 0) : 0; }
+        void SetSub(int i, int col, const std::wstring& s) {
+            if (!c->Handle) return;
+            LVITEMW li = { 0 };
+            li.mask = LVIF_TEXT;
+            li.iItem = i;
+            li.iSubItem = col;
+            li.pszText = (LPWSTR)s.c_str();
+            SendMessageW(c->Handle, LVM_SETITEMTEXTW, (WPARAM)i, (LPARAM)&li);
+        }
+        std::wstring GetSub(int i, int col) const {
+            if (!c->Handle) return L"";
+            wchar_t buf[256] = L"";
+            LVITEMW li = { 0 };
+            li.mask = LVIF_TEXT;
+            li.iItem = i;
+            li.iSubItem = col;
+            li.pszText = buf;
+            li.cchTextMax = 256;
+            SendMessageW(c->Handle, LVM_GETITEMTEXTW, (WPARAM)i, (LPARAM)&li);
+            return buf;
+        }
+        int  GetSelectedIndex() const { return c->Handle ? (int)SendMessageW(c->Handle, LVM_GETNEXTITEM, (WPARAM)-1, MAKELPARAM(LVNI_SELECTED, 0)) : -1; }
+        std::wstring GetSelectedItem() const { return GetSub(GetSelectedIndex(), 0); }
+        void EnsureVisible(int i) { if (c->Handle) SendMessageW(c->Handle, LVM_ENSUREVISIBLE, (WPARAM)i, 0); }
+        void BeginUpdate() { if (c->Handle) SendMessageW(c->Handle, WM_SETREDRAW, FALSE, 0); }
+        void EndUpdate()   { if (c->Handle) { SendMessageW(c->Handle, WM_SETREDRAW, TRUE, 0); InvalidateRect(c->Handle, nullptr, TRUE); } }
+        class SelIdxProp {
+            ItemsProp* p;
+        public:
+            explicit SelIdxProp(ItemsProp* o) : p(o) {}
+            SelIdxProp& operator=(int i) {
+                if (p->c->Handle) {
+                    LVITEMW li = { 0 };
+                    li.mask = LVIF_STATE;
+                    li.state = LVIS_SELECTED;
+                    li.stateMask = LVIS_SELECTED;
+                    SendMessageW(p->c->Handle, LVM_SETITEMSTATE, (WPARAM)-1, (LPARAM)&li);
+                    if (i >= 0) SendMessageW(p->c->Handle, LVM_SETITEMSTATE, (WPARAM)i, (LPARAM)&li);
+                }
+                return *this;
+            }
+            operator int() const { return p->GetSelectedIndex(); }
+        } SelectedIndex{ this };
+        class SelItemProp {
+            ItemsProp* p;
+        public:
+            explicit SelItemProp(ItemsProp* o) : p(o) {}
+            operator std::wstring() const { return p->GetSelectedItem(); }
+        } SelectedItem{ this };
+        class CountProp {
+            ItemsProp* p;
+        public:
+            explicit CountProp(ItemsProp* o) : p(o) {}
+            operator int() const { return p->GetCount(); }
+        } Count{ this };
+    } Items{ this };
+    // listView1->View = M2God::View::Details;
+    class ViewProp {
+        Control* c;
+    public:
+        explicit ViewProp(Control* o) : c(o) {}
+        ViewProp& operator=(M2God::View v) {
+            if (c->Handle) {
+                LONG lv = (v == M2God::View::Details) ? LVS_REPORT :
+                          (v == M2God::View::List) ? LVS_LIST :
+                          (v == M2God::View::SmallIcon) ? LVS_SMALLICON : LVS_ICON;
+                SendMessageW(c->Handle, LVM_SETVIEW, (WPARAM)lv, 0);
+            }
+            return *this;
+        }
+    } View{ this };
+    // listView1->CheckBoxes = true;
+    class CheckBoxesProp {
+        Control* c;
+    public:
+        explicit CheckBoxesProp(Control* o) : c(o) {}
+        CheckBoxesProp& operator=(bool v) {
+            if (c->Handle) ListView_SetExtendedListViewStyleEx(c->Handle, LVS_EX_CHECKBOXES, v ? LVS_EX_CHECKBOXES : 0);
+            return *this;
+        }
+        operator bool() const {
+            return c->Handle && (ListView_GetExtendedListViewStyle(c->Handle) & LVS_EX_CHECKBOXES) != 0;
+        }
+    } CheckBoxes{ this };
+    class FullRowSelectProp {
+        Control* c;
+    public:
+        explicit FullRowSelectProp(Control* o) : c(o) {}
+        FullRowSelectProp& operator=(bool v) {
+            if (c->Handle) ListView_SetExtendedListViewStyleEx(c->Handle, LVS_EX_FULLROWSELECT, v ? LVS_EX_FULLROWSELECT : 0);
+            return *this;
+        }
+    } FullRowSelect{ this };
+    class GridLinesProp {
+        Control* c;
+    public:
+        explicit GridLinesProp(Control* o) : c(o) {}
+        GridLinesProp& operator=(bool v) {
+            if (c->Handle) ListView_SetExtendedListViewStyleEx(c->Handle, LVS_EX_GRIDLINES, v ? LVS_EX_GRIDLINES : 0);
+            return *this;
+        }
+    } GridLines{ this };
+    class HeaderStyleProp {
+        Control* c;
+    public:
+        explicit HeaderStyleProp(Control* o) : c(o) {}
+        HeaderStyleProp& operator=(M2God::HeaderStyle hs) {
+            if (!c->Handle) return *this;
+            LONG_PTR add = 0, rem = 0;
+            switch (hs) {
+            case M2God::HeaderStyle::None:        add = LVS_NOCOLUMNHEADER; break;
+            case M2God::HeaderStyle::NonClickable: add = LVS_NOSORTHEADER; break;
+            default: rem = LVS_NOCOLUMNHEADER | LVS_NOSORTHEADER; break;
+            }
+            RestyleWindow(c->Handle, add, rem);
+            return *this;
+        }
+    } HeaderStyle{ this };
+    // item isaretlemesi (CheckBoxes = true iken)
+    void SetItemChecked(int i, bool v) {
+        if (!Handle || i < 0) return;
+        LVITEMW li = { 0 };
+        li.mask = LVIF_STATE;
+        li.state = INDEXTOSTATEIMAGEMASK(v ? 2 : 1);
+        li.stateMask = LVIS_STATEIMAGEMASK;
+        SendMessageW(Handle, LVM_SETITEMSTATE, (WPARAM)i, (LPARAM)&li);
+    }
+    bool GetItemChecked(int i) const {
+        if (!Handle || i < 0) return false;
+        return (SendMessageW(Handle, LVM_GETITEMSTATE, (WPARAM)i, LVIS_STATEIMAGEMASK) >> 12) == 2;
+    }
+    // --- Faz 2.6: etkinlesme/izleme ozellikleri (LVS_EX) ---
+    class ActivationProp {
+        Control* c;
+    public:
+        explicit ActivationProp(Control* o) : c(o) {}
+        // OneClick | TwoClick | Standard (WinForms ItemActivation)
+        ActivationProp& operator=(const wchar_t* a) {
+            if (c->Handle) {
+                bool one = (_wcsicmp(a, L"OneClick") == 0);
+                bool two = (_wcsicmp(a, L"TwoClick") == 0);
+                LONG_PTR add = 0, rem = 0;
+                if (one) { add = LVS_EX_ONECLICKACTIVATE; rem = LVS_EX_TWOCLICKACTIVATE; }
+                else if (two) { add = LVS_EX_TWOCLICKACTIVATE; rem = LVS_EX_ONECLICKACTIVATE; }
+                else { rem = LVS_EX_ONECLICKACTIVATE | LVS_EX_TWOCLICKACTIVATE; }
+                SendMessageW(c->Handle, LVM_SETEXTENDEDLISTVIEWSTYLE, 0, (LPARAM)add);
+                (void)rem;
+            }
+            return *this;
+        }
+    } Activation{ this };
+    class HotTrackingProp {
+        Control* c;
+    public:
+        explicit HotTrackingProp(Control* o) : c(o) {}
+        HotTrackingProp& operator=(bool v) {
+            if (c->Handle)
+                SendMessageW(c->Handle, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+                             (LPARAM)(v ? (LVS_EX_TRACKSELECT | LVS_EX_ONECLICKACTIVATE | LVS_EX_UNDERLINEHOT) : 0));
+            return *this;
+        }
+    } HotTracking{ this };
+    class HoverSelectionProp {
+        Control* c;
+    public:
+        explicit HoverSelectionProp(Control* o) : c(o) {}
+        HoverSelectionProp& operator=(bool v) {
+            if (c->Handle)
+                SendMessageW(c->Handle, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
+                             (LPARAM)(v ? LVS_EX_TRACKSELECT : 0));
+            return *this;
+        }
+    } HoverSelection{ this };
+    bool MultiSelect = true;   // yaratma stili (LVS_SINGLESEL); bilgi amacli
+    M2God::SortOrder Sorting = M2God::SortOrder::None;
+    void Clear() { if (Handle) { SendMessageW(Handle, LVM_DELETEALLITEMS, 0, 0); } }
+};
+
+// ============================================================================
+//  TreeView — index tabanli Nodes API
+// ============================================================================
+class TreeView : public Control {
+public:
+    TreeView(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysTreeView32", text.c_str(),
+            TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | WS_BORDER | WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            x, y, w, h, parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    static std::map<HWND, std::vector<HTREEITEM>>& NodeTable() {
+        static std::map<HWND, std::vector<HTREEITEM>> tbl;
+        return tbl;
+    }
+    std::vector<HTREEITEM>& Nodes_() { return NodeTable()[Handle]; }
+    // treeView1->Nodes->Add(L"kok");  ->AddChild(0, L"cocuk");
+    class NodesProp {
+        TreeView* c;
+    public:
+        explicit NodesProp(TreeView* o) : c(o) {}
+        NodesProp* operator->() { return this; }
+        void Clear() {
+            if (c->Handle) { SendMessageW(c->Handle, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT); c->Nodes_().clear(); }
+        }
+        int Add(const std::wstring& s) { return AddChild(-1, s); }
+        int AddChild(int parentIdx, const std::wstring& s) {
+            if (!c->Handle) return -1;
+            TVINSERTSTRUCTW is = { 0 };
+            is.hInsertAfter = TVI_LAST;
+            is.item.mask = TVIF_TEXT;
+            is.item.pszText = (LPWSTR)s.c_str();
+            std::vector<HTREEITEM>& tbl = c->Nodes_();
+            if (parentIdx >= 0 && parentIdx < (int)tbl.size()) is.hParent = tbl[parentIdx];
+            else { is.hParent = TVI_ROOT; parentIdx = -1; }
+            HTREEITEM h = (HTREEITEM)SendMessageW(c->Handle, TVM_INSERTITEMW, 0, (LPARAM)&is);
+            tbl.push_back(h);
+            return (int)tbl.size() - 1;
+        }
+        void RemoveAt(int i) {
+            if (!c->Handle || i < 0 || i >= (int)c->Nodes_().size()) return;
+            HTREEITEM h = c->Nodes_()[i];
+            if (h) SendMessageW(c->Handle, TVM_DELETEITEM, 0, (LPARAM)h);
+            c->Nodes_().erase(c->Nodes_().begin() + i);
+        }
+        int GetCount() const { return (int)(c->NodeTable().count(c->Handle) ? c->NodeTable()[c->Handle].size() : 0); }
+        std::wstring GetText(int i) const {
+            if (!c->Handle || i < 0 || i >= GetCount()) return L"";
+            wchar_t buf[256] = L"";
+            TVITEMW ti = { 0 };
+            ti.mask = TVIF_TEXT;
+            ti.hItem = c->NodeTable()[c->Handle][i];
+            ti.pszText = buf;
+            ti.cchTextMax = 256;
+            SendMessageW(c->Handle, TVM_GETITEMW, 0, (LPARAM)&ti);
+            return buf;
+        }
+        void Expand(int i) {
+            if (c->Handle && i >= 0 && i < GetCount())
+                TreeView_Expand(c->Handle, c->NodeTable()[c->Handle][i], TVE_EXPAND);
+        }
+        void ExpandAll() {
+            if (!c->Handle) return;
+            HTREEITEM h = TreeView_GetRoot(c->Handle);
+            while (h) { TreeView_Expand(c->Handle, h, TVE_EXPAND); h = TreeView_GetNextItem(c->Handle, h, TVGN_NEXTVISIBLE); }
+        }
+        class CountProp {
+            NodesProp* p;
+        public:
+            explicit CountProp(NodesProp* o) : p(o) {}
+            operator int() const { return p->GetCount(); }
+        } Count{ this };
+    } Nodes{ this };
+    class SelectedIndexProp {
+        TreeView* c;
+    public:
+        explicit SelectedIndexProp(TreeView* o) : c(o) {}
+        SelectedIndexProp& operator=(int i) {
+            if (!c->Handle) return *this;
+            if (i >= 0 && i < (int)c->Nodes_().size())
+                SendMessageW(c->Handle, TVM_SELECTITEM, (WPARAM)TVGN_CARET, (LPARAM)c->Nodes_()[i]);
+            return *this;
+        }
+        operator int() const {
+            if (!c->Handle) return -1;
+            HTREEITEM h = TreeView_GetSelection(c->Handle);
+            std::vector<HTREEITEM>& tbl = c->Nodes_();
+            for (int i = 0; i < (int)tbl.size(); i++) if (tbl[i] == h) return i;
+            return -1;
+        }
+    } SelectedIndex{ this };
+    class SelectedTextProp {
+        TreeView* c;
+    public:
+        explicit SelectedTextProp(TreeView* o) : c(o) {}
+        operator std::wstring() const {
+            int i = (int)c->SelectedIndex;
+            return i >= 0 ? c->Nodes.GetText(i) : L"";
+        }
+    } SelectedText{ this };
+    class CheckBoxesProp {
+        Control* c;
+    public:
+        explicit CheckBoxesProp(Control* o) : c(o) {}
+        CheckBoxesProp& operator=(bool v) {
+            // TVS_CHECKBOXES yaratmadan once ayarlanmali; ogeler eklenmeden uygulandiginda calisir
+            if (c->Handle) RestyleWindow(c->Handle, v ? TVS_CHECKBOXES : 0, v ? 0 : TVS_CHECKBOXES);
+            return *this;
+        }
+    } CheckBoxes{ this };
+    bool GetItemChecked(int i) const {
+        std::vector<HTREEITEM>& tbl = NodeTable()[Handle];
+        if (!Handle || i < 0 || i >= (int)tbl.size()) return false;
+        TVITEMW ti = { 0 };
+        ti.mask = TVIF_STATE;
+        ti.hItem = tbl[i];
+        ti.stateMask = TVIS_STATEIMAGEMASK;
+        SendMessageW(Handle, TVM_GETITEMW, 0, (LPARAM)&ti);
+        return (((ti.state & TVIS_STATEIMAGEMASK) >> 12) == 2);
+    }
+    void SetItemChecked(int i, bool v) {
+        if (!Handle || i < 0 || i >= (int)Nodes_().size()) return;
+        TVITEMW ti = { 0 };
+        ti.mask = TVIF_STATE;
+        ti.hItem = Nodes_()[i];
+        ti.stateMask = TVIS_STATEIMAGEMASK;
+        ti.state = INDEXTOSTATEIMAGEMASK(v ? 2 : 1);
+        SendMessageW(Handle, TVM_SETITEMW, 0, (LPARAM)&ti);
+    }
+    class ShowLinesProp {
+        Control* c;
+    public:
+        explicit ShowLinesProp(Control* o) : c(o) {}
+        ShowLinesProp& operator=(bool v) { if (c->Handle) RestyleWindow(c->Handle, v ? TVS_HASLINES : 0, v ? 0 : TVS_HASLINES); return *this; }
+    } ShowLines{ this };
+    class ShowPlusMinusProp {
+        Control* c;
+    public:
+        explicit ShowPlusMinusProp(Control* o) : c(o) {}
+        ShowPlusMinusProp& operator=(bool v) { if (c->Handle) RestyleWindow(c->Handle, v ? TVS_HASBUTTONS : 0, v ? 0 : TVS_HASBUTTONS); return *this; }
+    } ShowPlusMinus{ this };
+    class ShowRootLinesProp {
+        Control* c;
+    public:
+        explicit ShowRootLinesProp(Control* o) : c(o) {}
+        ShowRootLinesProp& operator=(bool v) { if (c->Handle) RestyleWindow(c->Handle, v ? TVS_LINESATROOT : 0, v ? 0 : TVS_LINESATROOT); return *this; }
+    } ShowRootLines{ this };
+    class HotTrackingProp {
+        Control* c;
+    public:
+        explicit HotTrackingProp(Control* o) : c(o) {}
+        HotTrackingProp& operator=(bool v) { if (c->Handle) RestyleWindow(c->Handle, v ? TVS_TRACKSELECT : 0, v ? 0 : TVS_TRACKSELECT); return *this; }
+    } HotTracking{ this };
+    class IndentProp {
+        Control* c;
+    public:
+        explicit IndentProp(Control* o) : c(o) {}
+        IndentProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TVM_SETINDENT, (WPARAM)v, 0); return *this; }
+    } Indent{ this };
+    // --- Faz 2.6: satir yuksekligi + cizgi rengi ---
+    class ItemHeightProp {
+        Control* c;
+    public:
+        explicit ItemHeightProp(Control* o) : c(o) {}
+        ItemHeightProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TVM_SETITEMHEIGHT, (WPARAM)v, 0); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, TVM_GETITEMHEIGHT, 0, 0) : 0; }
+    } ItemHeight{ this };
+    class LineColorProp {
+        Control* c;
+    public:
+        explicit LineColorProp(Control* o) : c(o) {}
+        LineColorProp& operator=(COLORREF v) { if (c->Handle) SendMessageW(c->Handle, TVM_SETLINECOLOR, 0, (LPARAM)v); return *this; }
+        operator COLORREF() const { return c->Handle ? (COLORREF)SendMessageW(c->Handle, TVM_GETLINECOLOR, 0, 0) : RGB(0, 0, 0); }
+    } LineColor{ this };
+    std::wstring PathSeparator = L"\\";
+};
+
+// ============================================================================
+//  ProgressBar
+// ============================================================================
+class ProgressBar : public Control {
+public:
+    ProgressBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"msctls_progress32", text.c_str(),
+            WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        SendMessageW(Handle, PBM_SETRANGE32, 0, 100);
+    }
+    class ValueProp {
+        Control* c;
+    public:
+        explicit ValueProp(Control* o) : c(o) {}
+        ValueProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, PBM_SETPOS, (WPARAM)v, 0); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, PBM_GETPOS, 0, 0) : 0; }
+    } Value{ this };
+    class MinimumProp {
+        Control* c;
+    public:
+        explicit MinimumProp(Control* o) : c(o) {}
+        MinimumProp& operator=(int v) { if (c->Handle) { int mx = 100; PBRANGE pr; SendMessageW(c->Handle, PBM_GETRANGE, FALSE, (LPARAM)&pr); mx = pr.iHigh; SendMessageW(c->Handle, PBM_SETRANGE32, (WPARAM)v, (LPARAM)mx); } return *this; }
+        operator int() const { if (!c->Handle) return 0; PBRANGE pr; SendMessageW(c->Handle, PBM_GETRANGE, TRUE, (LPARAM)&pr); return pr.iLow; }
+    } Minimum{ this };
+    class MaximumProp {
+        Control* c;
+    public:
+        explicit MaximumProp(Control* o) : c(o) {}
+        MaximumProp& operator=(int v) { if (c->Handle) { PBRANGE pr; SendMessageW(c->Handle, PBM_GETRANGE, TRUE, (LPARAM)&pr); SendMessageW(c->Handle, PBM_SETRANGE32, (WPARAM)pr.iLow, (LPARAM)v); } return *this; }
+        operator int() const { if (!c->Handle) return 100; PBRANGE pr; SendMessageW(c->Handle, PBM_GETRANGE, FALSE, (LPARAM)&pr); return pr.iHigh; }
+    } Maximum{ this };
+    class StepProp {
+        Control* c;
+    public:
+        explicit StepProp(Control* o) : c(o) {}
+        StepProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, PBM_SETSTEP, (WPARAM)v, 0); return *this; }
+    } Step{ this };
+    class StyleProp {
+        Control* c;
+    public:
+        explicit StyleProp(Control* o) : c(o) {}
+        StyleProp& operator=(M2God::ProgressBarStyle st) {
+            if (!c->Handle) return *this;
+            if (st == M2God::ProgressBarStyle::Marquee) {
+                RestyleWindow(c->Handle, PBS_MARQUEE, 0);
+                SendMessageW(c->Handle, PBM_SETMARQUEE, TRUE, (LPARAM)30);
+            } else {
+                SendMessageW(c->Handle, PBM_SETMARQUEE, FALSE, 0);
+                RestyleWindow(c->Handle, 0, PBS_MARQUEE);
+            }
+            return *this;
+        }
+    } Style{ this };
+    // --- Faz 2.6: MarqueeAnimationSpeed (ms; 0 = durur, >0 = marquee baslar) ---
+    class MarqueeSpeedProp {
+        Control* c;
+    public:
+        explicit MarqueeSpeedProp(Control* o) : c(o) {}
+        MarqueeSpeedProp& operator=(int v) {
+            if (c->Handle) {
+                RestyleWindow(c->Handle, v > 0 ? PBS_MARQUEE : 0, v > 0 ? 0 : PBS_MARQUEE);
+                SendMessageW(c->Handle, PBM_SETMARQUEE, v > 0 ? TRUE : FALSE, (LPARAM)v);
+            }
+            return *this;
+        }
+    } MarqueeAnimationSpeed{ this };
+    void PerformStep() { if (Handle) SendMessageW(Handle, PBM_STEPIT, 0, 0); }
+    void Increment(int n) { if (Handle) SendMessageW(Handle, PBM_DELTAPOS, (WPARAM)n, 0); }
+    int  StepStored = 10;
+};
+
+// ============================================================================
+//  TrackBar
+// ============================================================================
+class TrackBar : public Control {
+public:
+    TrackBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"msctls_trackbar32", text.c_str(),
+            WS_TABSTOP | TBS_HORZ | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        SendMessageW(Handle, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+    }
+    class ValueProp {
+        Control* c;
+    public:
+        explicit ValueProp(Control* o) : c(o) {}
+        ValueProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TBM_SETPOS, TRUE, (LPARAM)v); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, TBM_GETPOS, 0, 0) : 0; }
+    } Value{ this };
+    class MinimumProp {
+        Control* c;
+    public:
+        explicit MinimumProp(Control* o) : c(o) {}
+        MinimumProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TBM_SETRANGEMIN, TRUE, (LPARAM)v); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, TBM_GETRANGEMIN, 0, 0) : 0; }
+    } Minimum{ this };
+    class MaximumProp {
+        Control* c;
+    public:
+        explicit MaximumProp(Control* o) : c(o) {}
+        MaximumProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TBM_SETRANGEMAX, TRUE, (LPARAM)v); return *this; }
+        operator int() const { return c->Handle ? (int)SendMessageW(c->Handle, TBM_GETRANGEMAX, 0, 0) : 100; }
+    } Maximum{ this };
+    class TickFrequencyProp {
+        Control* c;
+    public:
+        explicit TickFrequencyProp(Control* o) : c(o) {}
+        TickFrequencyProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TBM_SETTICFREQ, (WPARAM)(v > 0 ? v : 1), 0); return *this; }
+    } TickFrequency{ this };
+    class SmallChangeProp {
+        Control* c;
+    public:
+        explicit SmallChangeProp(Control* o) : c(o) {}
+        SmallChangeProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TBM_SETLINESIZE, 0, (LPARAM)v); return *this; }
+    } SmallChange{ this };
+    class LargeChangeProp {
+        Control* c;
+    public:
+        explicit LargeChangeProp(Control* o) : c(o) {}
+        LargeChangeProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, TBM_SETPAGESIZE, 0, (LPARAM)v); return *this; }
+    } LargeChange{ this };
+    class TickStyleProp {
+        Control* c;
+    public:
+        explicit TickStyleProp(Control* o) : c(o) {}
+        TickStyleProp& operator=(M2God::TickStyle ts) {
+            if (c->Handle) {
+                if (ts == M2God::TickStyle::None) SendMessageW(c->Handle, TBM_CLEARTICS, FALSE, 0);
+                else RestyleWindow(c->Handle, TBS_AUTOTICKS, 0);
+            }
+            return *this;
+        }
+    } TickStyle{ this };
+    void SetRange(int mn, int mx, bool redraw = true) {
+        if (Handle) SendMessageW(Handle, TBM_SETRANGE, redraw ? TRUE : FALSE, MAKELPARAM(mn, mx));
+    }
+};
+
+// ============================================================================
+//  HScrollBar / VScrollBar — SetScrollInfo tabanli
+// ============================================================================
+class ScrollBarBase : public Control {
+public:
+    ScrollBarBase() {}
+    class ValueProp {
+        ScrollBarBase* c;
+    public:
+        explicit ValueProp(ScrollBarBase* o) : c(o) {}
+        ValueProp& operator=(int v) {
+            if (c->Handle) {
+                SCROLLINFO si = { sizeof(si) };
+                si.fMask = SIF_ALL;
+                GetScrollInfo(c->Handle, SB_CTL, &si);
+                si.nPos = v; si.fMask = SIF_POS;
+                SetScrollInfo(c->Handle, SB_CTL, &si, TRUE);
+            }
+            return *this;
+        }
+        operator int() const {
+            if (!c->Handle) return 0;
+            SCROLLINFO si = { sizeof(si), SIF_POS };
+            GetScrollInfo(c->Handle, SB_CTL, &si);
+            return si.nPos;
+        }
+    } Value{ this };
+    class MinimumProp {
+        ScrollBarBase* c;
+    public:
+        explicit MinimumProp(ScrollBarBase* o) : c(o) {}
+        MinimumProp& operator=(int v) { c->SetRange2(v, -1); return *this; }
+        operator int() const { return c->MinStored; }
+    } Minimum{ this };
+    class MaximumProp {
+        ScrollBarBase* c;
+    public:
+        explicit MaximumProp(ScrollBarBase* o) : c(o) {}
+        MaximumProp& operator=(int v) { c->SetRange2(-1, v); return *this; }
+        operator int() const { return c->MaxStored; }
+    } Maximum{ this };
+    class SmallChangeProp {
+        ScrollBarBase* c;
+    public:
+        explicit SmallChangeProp(ScrollBarBase* o) : c(o) {}
+        SmallChangeProp& operator=(int v) { c->SmallStored = v; return *this; }
+        operator int() const { return c->SmallStored; }
+    } SmallChange{ this };
+    class LargeChangeProp {
+        ScrollBarBase* c;
+    public:
+        explicit LargeChangeProp(ScrollBarBase* o) : c(o) {}
+        LargeChangeProp& operator=(int v) { c->LargeStored = v; c->SetRange2(-1, -1); return *this; }
+        operator int() const { return c->LargeStored; }
+    } LargeChange{ this };
+
+    int MinStored = 0, MaxStored = 100, SmallStored = 1, LargeStored = 10;
+    void SetRange2(int mn, int mx) {
+        if (mn >= 0) MinStored = mn;
+        if (mx >= 0) MaxStored = mx;
+        if (!Handle) return;
+        SCROLLINFO si = { sizeof(si) };
+        si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
+        si.nMin = MinStored;
+        si.nMax = MaxStored;
+        si.nPage = (UINT)(LargeStored > 0 ? LargeStored : 1);
+        si.nPos = MinStored;
+        SetScrollInfo(Handle, SB_CTL, &si, TRUE);
+    }
+};
+class HScrollBar : public ScrollBarBase {
+public:
+    HScrollBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"SCROLLBAR", text.c_str(),
+            SBS_HORZ | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        SetRange2(0, 100);
+    }
+};
+class VScrollBar : public ScrollBarBase {
+public:
+    VScrollBar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"SCROLLBAR", text.c_str(),
+            SBS_VERT | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        SetRange2(0, 100);
+    }
+};
+
+// ============================================================================
+//  DateTimePicker / MonthCalendar
+// ============================================================================
+class DateTimePicker : public Control {
+public:
+    DateTimePicker(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysDateTimePick32", text.c_str(),
+            WS_TABSTOP | DTS_SHORTDATECENTURYFORMAT | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // dateTimePicker1->Value = M2God::M2DateTime(2026, 1, 15);
+    class ValueProp {
+        DateTimePicker* c;
+    public:
+        explicit ValueProp(DateTimePicker* o) : c(o) {}
+        ValueProp& operator=(const M2DateTime& dt) {
+            if (c->Handle) { SYSTEMTIME st; dt.ToSystemTime(st); SendMessageW(c->Handle, DTM_SETSYSTEMTIME, (WPARAM)GDT_VALID, (LPARAM)&st); }
+            return *this;
+        }
+        operator M2DateTime() const {
+            SYSTEMTIME st;
+            if (c->Handle && SendMessageW(c->Handle, DTM_GETSYSTEMTIME, 0, (LPARAM)&st) == GDT_VALID)
+                return M2DateTime::FromSystemTime(st);
+            return M2DateTime();
+        }
+    } Value{ this };
+    // --- Faz 2.6: MinDate / MaxDate ("YYYY-MM-DD" veya "YYYY-MM-DD HH:MM") ---
+    class MinMaxDateProp {
+        Control* c;
+        bool isMin;
+    public:
+        explicit MinMaxDateProp(Control* o, bool mn) : c(o), isMin(mn) {}
+        MinMaxDateProp& operator=(const wchar_t* iso) {
+            if (!c->Handle) return *this;
+            SYSTEMTIME st = { 0 };
+            int y = 0, mo = 0, d = 0;
+            if (swscanf(iso, L"%d-%d-%d", &y, &mo, &d) == 3 && y >= 1601 && y <= 30827) {
+                st.wYear = (WORD)y; st.wMonth = (WORD)mo; st.wDay = (WORD)d;
+                SYSTEMTIME range[2];
+                DateTime_SetRange(c->Handle, GDTR_MIN | GDTR_MAX, range);
+                // mevcut diger siniri koru
+                SYSTEMTIME cur[2];
+                DWORD gd = DateTime_GetRange(c->Handle, cur);
+                if (isMin) { range[0] = st; range[1] = cur[1]; if (!(gd & GDTR_MAX)) DateTime_SetRange(c->Handle, GDTR_MIN, range); else DateTime_SetRange(c->Handle, GDTR_MIN | GDTR_MAX, range); }
+                else { range[1] = st; range[0] = cur[0]; if (!(gd & GDTR_MIN)) DateTime_SetRange(c->Handle, GDTR_MAX, range); else DateTime_SetRange(c->Handle, GDTR_MIN | GDTR_MAX, range); }
+            }
+            return *this;
+        }
+    };
+    MinMaxDateProp MinDate{ this, true };
+    MinMaxDateProp MaxDate{ this, false };
+    class FormatProp {
+        DateTimePicker* c;
+    public:
+        explicit FormatProp(DateTimePicker* o) : c(o) {}
+        FormatProp& operator=(M2God::DateTimePickerFormat f) {
+            if (!c->Handle) return *this;
+            const wchar_t* fmt = L"dd.MM.yyyy";
+            switch (f) {
+            case M2God::DateTimePickerFormat::Long:   fmt = L"dddd, dd MMMM yyyy"; break;
+            case M2God::DateTimePickerFormat::Short:  fmt = L"dd.MM.yyyy"; break;
+            case M2God::DateTimePickerFormat::Time:   fmt = L"HH:mm:ss"; break;
+            case M2God::DateTimePickerFormat::Custom: fmt = nullptr; break;   // CustomFormat ile birlikte
+            }
+            if (fmt) SendMessageW(c->Handle, DTM_SETFORMATW, 0, (LPARAM)fmt);
+            return *this;
+        }
+    } Format{ this };
+    class CustomFormatProp {
+        DateTimePicker* c;
+    public:
+        explicit CustomFormatProp(DateTimePicker* o) : c(o) {}
+        CustomFormatProp& operator=(const std::wstring& fmt) {
+            if (c->Handle) SendMessageW(c->Handle, DTM_SETFORMATW, 0, (LPARAM)fmt.c_str());
+            return *this;
+        }
+    } CustomFormat{ this };
+    class CheckedProp {
+        DateTimePicker* c;
+    public:
+        explicit CheckedProp(DateTimePicker* o) : c(o) {}
+        CheckedProp& operator=(bool v) {
+            if (!c->Handle) return *this;
+            SYSTEMTIME st;
+            if (!v) SendMessageW(c->Handle, DTM_SETSYSTEMTIME, (WPARAM)GDT_NONE, 0);
+            else {
+                if (SendMessageW(c->Handle, DTM_GETSYSTEMTIME, 0, (LPARAM)&st) != GDT_VALID)
+                    GetLocalTime(&st);
+                SendMessageW(c->Handle, DTM_SETSYSTEMTIME, (WPARAM)GDT_VALID, (LPARAM)&st);
+            }
+            return *this;
+        }
+        operator bool() const {
+            if (!c->Handle) return false;
+            SYSTEMTIME st;
+            return SendMessageW(c->Handle, DTM_GETSYSTEMTIME, 0, (LPARAM)&st) == GDT_VALID;
+        }
+    } Checked{ this };
+    bool ShowUpDown = false;     // yaratma stili (DTS_UPDOWN); bilgi amacli
+    bool ShowCheckBox = false;   // yaratma stili (DTS_SHOWNONE); bilgi amacli
+};
+
+class MonthCalendar : public Control {
+public:
+    MonthCalendar(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"SysMonthCal32", text.c_str(),
+            WS_TABSTOP | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    void SetDate(int y, int m, int d) {
+        if (!Handle) return;
+        SYSTEMTIME st;
+        ZeroMemory(&st, sizeof(st));
+        st.wYear = (WORD)y; st.wMonth = (WORD)m; st.wDay = (WORD)d;
+        SendMessageW(Handle, MCM_SETCURSEL, 0, (LPARAM)&st);
+    }
+    class MaxSelectionCountProp {
+        MonthCalendar* c;
+    public:
+        explicit MaxSelectionCountProp(MonthCalendar* o) : c(o) {}
+        MaxSelectionCountProp& operator=(int v) { if (c->Handle) SendMessageW(c->Handle, MCM_SETMAXSELCOUNT, (WPARAM)v, 0); return *this; }
+    } MaxSelectionCount{ this };
+    class TitleBackColorProp {
+        MonthCalendar* c;
+    public:
+        explicit TitleBackColorProp(MonthCalendar* o) : c(o) {}
+        TitleBackColorProp& operator=(COLORREF cr) { if (c->Handle) SendMessageW(c->Handle, MCM_SETCOLOR, (WPARAM)MCSC_TITLEBK, (LPARAM)cr); return *this; }
+    } TitleBackColor{ this };
+    class TitleForeColorProp {
+        MonthCalendar* c;
+    public:
+        explicit TitleForeColorProp(MonthCalendar* o) : c(o) {}
+        TitleForeColorProp& operator=(COLORREF cr) { if (c->Handle) SendMessageW(c->Handle, MCM_SETCOLOR, (WPARAM)MCSC_TITLETEXT, (LPARAM)cr); return *this; }
+    } TitleForeColor{ this };
+    class TrailingForeColorProp {
+        MonthCalendar* c;
+    public:
+        explicit TrailingForeColorProp(MonthCalendar* o) : c(o) {}
+        TrailingForeColorProp& operator=(COLORREF cr) { if (c->Handle) SendMessageW(c->Handle, MCM_SETCOLOR, (WPARAM)MCSC_TRAILINGTEXT, (LPARAM)cr); return *this; }
+    } TrailingForeColor{ this };
+    class FirstDayOfWeekProp {
+        MonthCalendar* c;
+    public:
+        explicit FirstDayOfWeekProp(MonthCalendar* o) : c(o) {}
+        FirstDayOfWeekProp& operator=(int v) {
+            if (c->Handle) { DWORD f = MAKELONG((v >= 0 && v <= 6) ? v : 0, TRUE); SendMessageW(c->Handle, MCM_SETFIRSTDAYOFWEEK, 0, (LPARAM)f); }
+            return *this;
+        }
+    } FirstDayOfWeek{ this };
+    bool ShowWeekNumbers = false;   // yaratma stili (MCS_WEEKNUMBERS)
+    M2DateTime TodayDate() const {
+        SYSTEMTIME st;
+        if (Handle && SendMessageW(Handle, MCM_GETTODAY, 0, (LPARAM)&st)) return M2DateTime::FromSystemTime(st);
+        return M2DateTime();
+    }
+};
+
+// ============================================================================
+//  TabPage (M2GOD_TABPAGE_GEN) — TabControl'un GERCEK sayfa penceresi (Faz 2.6)
+//  Sekme degistirilince TabControl sayfa penceresini gosterir/gizler; diger
+//  kontroller sayfanin cocugu olarak yaratilir (parent = tabPageN->Handle).
+//  WinForms karsiligi: tabControl1->TabPages->Add(L"Sayfa") -> TabPage*
+// ============================================================================
+inline LRESULT CALLBACK M2TabPageProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    // sayfa icindeki kontrollerin WM_COMMAND/WM_NOTIFY'i sayfaya gelir —
+    // dogrudan forma tasir (ContainerBridge karsiligi; Faz 2.6)
+    if (m == WM_COMMAND || m == WM_NOTIFY) {
+        HWND form = GetAncestor(h, GA_ROOT);
+        if (form && form != h) { SendMessageW(form, m, w, l); return 0; }
+    }
+    if (m == WM_ERASEBKGND) {
+        HDC dc = (HDC)w; RECT rc; GetClientRect(h, &rc);
+        ColorInfo ci = CtrlColorInfo(h);
+        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
+        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
+        return 1;
+    }
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        RECT rc; GetClientRect(h, &rc);
+        ColorInfo ci = CtrlColorInfo(h);
+        COLORREF c = (ci.back != 0xFFFFFFFF) ? ci.back : RGB(255, 255, 255);
+        HBRUSH br = CreateSolidBrush(c); FillRect(dc, &rc, br); DeleteObject(br);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (m == WM_LBUTTONDOWN) {
+        // TabPage Click olayi -> WM_COMMAND(BN_CLICKED) dogrudan forma
+        HWND form = GetAncestor(h, GA_ROOT);
+        UINT id = (UINT)(INT_PTR)GetDlgCtrlID(h);
+        if (form && id) SendMessageW(form, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), (LPARAM)h);
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+inline void EnsureTabPageClass() {
+    static bool done = false; if (done) return; done = true;
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = M2TabPageProc;
+    wc.hInstance   = GetModuleHandleW(nullptr);
+    wc.hCursor     = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    wc.lpszClassName = L"M2GOD_TABPAGE_GEN";
+    RegisterClassW(&wc);
+}
+
+class TabPage : public Control {
+public:
+    HWND TabCtl = NULL;    // sahip TabControl HWND'si
+    int  PageIndex = -1;   // TabControl tarafindan guncellenir
+    TabPage() {}
+    TabPage(HWND tabCtl, int id, const std::wstring& text) {
+        EnsureTabPageClass();
+        TabCtl = tabCtl;
+        // gorunmez yaratilir — TabControl __ShowPage ile gosterir
+        Handle = CreateWindowExW(0, L"M2GOD_TABPAGE_GEN", text.c_str(),
+            WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 10, 10,
+            tabCtl, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // ---- Text: pencere metni + sekme basligi aynen ----
+    class TextProp {
+        TabPage* c;
+    public:
+        explicit TextProp(TabPage* o) : c(o) {}
+        TextProp& operator=(const std::wstring& t) {
+            if (c->Handle) SetWindowTextW(c->Handle, t.c_str());
+            if (c->TabCtl && c->PageIndex >= 0) {
+                TCITEMW ti = { 0 };
+                ti.mask = TCIF_TEXT;
+                ti.pszText = (LPWSTR)t.c_str();
+                SendMessageW(c->TabCtl, TCM_SETITEMW, (WPARAM)c->PageIndex, (LPARAM)&ti);
+            }
+            return *this;
+        }
+        TextProp& operator=(const wchar_t* s) { return *this = std::wstring(s ? s : L""); }
+        operator std::wstring() const {
+            if (!c->Handle) return L"";
+            int n = GetWindowTextLengthW(c->Handle);
+            if (n <= 0) return L"";
+            std::vector<wchar_t> buf((size_t)n + 2, 0);
+            GetWindowTextW(c->Handle, buf.data(), n + 1);
+            return std::wstring(buf.data());
+        }
+    } Text{ this };
+    // ---- ToolTipText (WinForms TabPage) — bilgi amacli saklanir ----
+    std::wstring ToolTipText;
+};
+
+// ============================================================================
+//  TabControl
+// ============================================================================
+class TabControl : public Control {
+public:
+    std::vector<TabPage*> pageList;   // sayfalar (Add/RemoveAt gunceller)
+    ~TabControl() {
+        for (auto* p : pageList) delete p;
+        pageList.clear();
+    }
+    TabControl(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"SysTabControl32", text.c_str(),
+            WS_TABSTOP | WS_CLIPCHILDREN | TCS_TABS | WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+    // --- sayfa pencere yerlesimi (TCM_ADJUSTRECT goruntuleme alani) ---
+    void __LayoutPages() {
+        if (!Handle || pageList.empty()) return;
+        RECT full; GetClientRect(Handle, &full);
+        RECT dr = full;
+        SendMessageW(Handle, TCM_ADJUSTRECT, FALSE, (LPARAM)&dr);
+        if (dr.right <= dr.left || dr.bottom <= dr.top) dr = full;
+        for (auto* p : pageList) {
+            if (p && p->Handle)
+                SetWindowPos(p->Handle, nullptr, dr.left, dr.top,
+                             dr.right - dr.left, dr.bottom - dr.top,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+    void __ShowPage(int i) {
+        __LayoutPages();
+        for (size_t k = 0; k < pageList.size(); k++) {
+            TabPage* p = pageList[k];
+            if (p && p->Handle) ShowWindow(p->Handle, ((int)k == i) ? SW_SHOWNA : SW_HIDE);
+        }
+    }
+    // WM_NOTIFY TCN_SELCHANGE router'i cagirir — sayfa gecisini saglar
+    void __SelChanged() {
+        int i = Handle ? (int)SendMessageW(Handle, TCM_GETCURSEL, 0, 0) : -1;
+        if (i >= 0 && i < (int)pageList.size()) __ShowPage(i);
+    }
+    // tabControl1->Pages->Add(L"tabPage1");  -> TabPage* doner (Faz 2.6)
+    // id = 0 -> otomatik; tasarimcidan gelen kodda IDS makrosu kullanilir
+    class PagesProp {
+        TabControl* c;
+    public:
+        explicit PagesProp(TabControl* o) : c(o) {}
+        PagesProp* operator->() { return this; }
+        int GetCount() const { return (int)c->pageList.size(); }
+        TabPage* Add(const std::wstring& title, int id = 0) {
+            if (!c->Handle) return nullptr;
+            if (!id) id = 0x8F00 + c->Id * 16 + (int)c->pageList.size() + 1;
+            TabPage* p = new TabPage(c->Handle, id, title);
+            p->PageIndex = (int)c->pageList.size();
+            c->pageList.push_back(p);
+            TCITEMW ti = { 0 };
+            ti.mask = TCIF_TEXT;
+            ti.pszText = (LPWSTR)title.c_str();
+            SendMessageW(c->Handle, TCM_INSERTITEMW, (WPARAM)(c->pageList.size() - 1), (LPARAM)&ti);
+            if (c->pageList.size() == 1) c->__ShowPage(0);
+            return p;
+        }
+        void Insert(int i, const std::wstring& title) {
+            if (!c->Handle) return;
+            if (i < 0 || i > (int)c->pageList.size()) i = (int)c->pageList.size();
+            int id = 0x8F00 + c->Id * 16 + (int)c->pageList.size() + 1;
+            TabPage* p = new TabPage(c->Handle, id, title);
+            c->pageList.insert(c->pageList.begin() + i, p);
+            for (size_t k = 0; k < c->pageList.size(); k++) c->pageList[k]->PageIndex = (int)k;
+            TCITEMW ti = { 0 };
+            ti.mask = TCIF_TEXT;
+            ti.pszText = (LPWSTR)title.c_str();
+            SendMessageW(c->Handle, TCM_INSERTITEMW, (WPARAM)i, (LPARAM)&ti);
+            c->__ShowPage((int)SendMessageW(c->Handle, TCM_GETCURSEL, 0, 0));
+        }
+        void RemoveAt(int i) {
+            if (!c->Handle || i < 0 || i >= (int)c->pageList.size()) return;
+            SendMessageW(c->Handle, TCM_DELETEITEM, (WPARAM)i, 0);
+            delete c->pageList[i];
+            c->pageList.erase(c->pageList.begin() + i);
+            for (size_t k = 0; k < c->pageList.size(); k++) c->pageList[k]->PageIndex = (int)k;
+            c->__ShowPage((int)SendMessageW(c->Handle, TCM_GETCURSEL, 0, 0));
+        }
+        void Remove(TabPage* p) {
+            for (size_t i = 0; i < c->pageList.size(); i++)
+                if (c->pageList[i] == p) { RemoveAt((int)i); return; }
+        }
+        void Clear() {
+            if (!c->Handle) return;
+            for (auto* p : c->pageList) delete p;
+            c->pageList.clear();
+            SendMessageW(c->Handle, TCM_DELETEALLITEMS, 0, 0);
+        }
+        TabPage* operator[](int i) const {
+            return (i >= 0 && i < (int)c->pageList.size()) ? c->pageList[i] : nullptr;
+        }
+        std::wstring GetText(int i) const {
+            if (!c->Handle || i < 0 || i >= (int)c->pageList.size()) return L"";
+            wchar_t buf[256] = L"";
+            TCITEMW ti = { 0 };
+            ti.mask = TCIF_TEXT;
+            ti.pszText = buf;
+            ti.cchTextMax = 256;
+            SendMessageW(c->Handle, TCM_GETITEMW, (WPARAM)i, (LPARAM)&ti);
+            return buf;
+        }
+        class SelIdxProp {
+            PagesProp* p;
+        public:
+            explicit SelIdxProp(PagesProp* o) : p(o) {}
+            SelIdxProp& operator=(int i) {
+                if (p->c->Handle) {
+                    SendMessageW(p->c->Handle, TCM_SETCURSEL, (WPARAM)i, 0);
+                    p->c->__ShowPage(i);   // sayfa gecisi (TCM_SETCURSEL bildirim uretmez)
+                }
+                return *this;
+            }
+            operator int() const { return p->c->Handle ? (int)SendMessageW(p->c->Handle, TCM_GETCURSEL, 0, 0) : -1; }
+        } SelectedIndex{ this };
+        class CountProp {
+            PagesProp* p;
+        public:
+            explicit CountProp(PagesProp* o) : p(o) {}
+            operator int() const { return p->GetCount(); }
+        } Count{ this };
+    } Pages{ this };
+    PagesProp TabPages{ this };   // WinForms adi (Faz 2.6: TabPage* API)
+    // tabControl1->SelectedTab() -> aktif sayfa (WinForms SelectedTab karsiligi)
+    TabPage* SelectedTab() const {
+        int i = Handle ? (int)SendMessageW(Handle, TCM_GETCURSEL, 0, 0) : -1;
+        return (i >= 0 && i < (int)pageList.size()) ? pageList[i] : nullptr;
+    }
+    class HotTrackProp {
+        Control* c;
+    public:
+        explicit HotTrackProp(Control* o) : c(o) {}
+        HotTrackProp& operator=(bool v) { if (c->Handle) RestyleWindow(c->Handle, v ? TCS_HOTTRACK : 0, v ? 0 : TCS_HOTTRACK); return *this; }
+    } HotTrack{ this };
+    bool Multiline = false;   // yaratma stili (TCS_MULTILINE)
+    int RowCount() const { return Handle ? (int)SendMessageW(Handle, TCM_GETROWCOUNT, 0, 0) : 0; }
+};
+
+// ============================================================================
+//  StatusStrip — msctls_statusbar32 (duzgun SB_SETPARTS ile)
+// ============================================================================
+class StatusStrip : public Control {
+public:
+    StatusStrip(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(0, L"msctls_statusbar32", text.c_str(),
+            WS_CHILD | WS_VISIBLE, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+    }
+    // statusStrip1->Parts->Add(L"Hazir");
+    class PartsProp {
+        StatusStrip* c;
+    public:
+        explicit PartsProp(StatusStrip* o) : c(o) {}
+        PartsProp* operator->() { return this; }
+        int Count() const { return c->Handle ? (int)SendMessageW(c->Handle, SB_GETPARTS, 0, 0) : 0; }
+        void Add(const std::wstring& t) {
+            if (!c->Handle) return;
+            int n = Count();
+            SendMessageW(c->Handle, SB_SETTEXTW, (WPARAM)(n | SBT_NOBORDERS), (LPARAM)t.c_str());
+            // tum parcalari esit genislikte yeniden dagit
+            RECT rc; GetClientRect(c->Handle, &rc);
+            int W = rc.right - rc.left;
+            int parts = n + 1;
+            std::vector<int> edges((size_t)parts, 0);
+            for (int i = 0; i < parts; i++) edges[(size_t)i] = (i == parts - 1) ? -1 : W * (i + 1) / parts;
+            SendMessageW(c->Handle, SB_SETPARTS, (WPARAM)parts, (LPARAM)edges.data());
+        }
+        void SetText(int i, const std::wstring& t) {
+            if (c->Handle) SendMessageW(c->Handle, SB_SETTEXTW, (WPARAM)(i | SBT_NOBORDERS), (LPARAM)t.c_str());
+        }
+        void Clear() {
+            if (!c->Handle) return;
+            int one = -1;
+            SendMessageW(c->Handle, SB_SETPARTS, (WPARAM)1, (LPARAM)&one);
+            SendMessageW(c->Handle, SB_SETTEXTW, (WPARAM)(0 | SBT_NOBORDERS), (LPARAM)L"");
+        }
+    } Parts{ this };
+    PartsProp Items{ this };   // WinForms adi
+    bool SizingGrip = true;
+};
+
+// ============================================================================
+//  MenuStrip / ToolStrip — gercek HMENU (Ust tarafa baglanir)
+//  Kullanim: menuStrip1->Items->Add(L"Dosya"); menuStrip1->Apply();
+//  Tiklamalar: menuStrip1->ItemClick = [](int idx){ ... };  (WndProc yonlendirir)
+// ============================================================================
+class MenuStrip : public Control {
+public:
+    struct Item { std::wstring Text; std::vector<int> Children; bool Separator = false; };
+    std::vector<Item> Items_;
+    HWND ParentHwnd = NULL;
+    std::function<void(int)> ItemClick;   // index
+    HMENU hMenu = NULL;
+    static const UINT FirstId = 0x7000;
+
+    MenuStrip(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        ParentHwnd = parent;      // pencere yaratilmaz — menü Form'a baglanir
+        Id = id;
+        (void)text; (void)x; (void)y; (void)w; (void)h;
+    }
+    class ItemsProp {
+        MenuStrip* c;
+    public:
+        explicit ItemsProp(MenuStrip* o) : c(o) {}
+        ItemsProp* operator->() { return this; }
+        int Add(const std::wstring& text) {
+            c->Items_.push_back({ text, {}, false });
+            return (int)c->Items_.size() - 1;
+        }
+        int AddSeparator() {
+            c->Items_.push_back({ L"", {}, true });
+            return (int)c->Items_.size() - 1;
+        }
+        int AddChild(int parentIdx, const std::wstring& text) {
+            c->Items_.push_back({ text, {}, false });
+            int idx = (int)c->Items_.size() - 1;
+            if (parentIdx >= 0 && parentIdx < (int)c->Items_.size())
+                c->Items_[(size_t)parentIdx].Children.push_back(idx);
+            return idx;
+        }
+        int Count() const { return (int)c->Items_.size(); }
+        void Clear() { c->Items_.clear(); }
+    } Items{ this };
+    void Apply() {   // menüyü forma bagla
+        if (!ParentHwnd || Items_.empty()) return;
+        if (hMenu) { DestroyMenu(hMenu); hMenu = nullptr; }
+        hMenu = ::CreateMenu();
+        BuildMenu(hMenu, -1);
+        SetMenu(ParentHwnd, hMenu);
+        DrawMenuBar(ParentHwnd);
+    }
+    void DispatchCommand(UINT id) {   // uretilen WndProc cagirir
+        if (id >= FirstId && id < FirstId + (UINT)Items_.size() && ItemClick)
+            ItemClick((int)(id - FirstId));
+    }
+    ~MenuStrip() { if (hMenu) DestroyMenu(hMenu); }
+private:
+    void BuildMenu(HMENU menu, int parentIdx) {
+        for (int i = 0; i < (int)Items_.size(); i++) {
+            const Item& it = Items_[(size_t)i];
+            if (parentIdx < 0) {
+                // ust seviye: cocuklari olanlar popup, olmayanlar da popup (basit kural)
+                if (it.Separator) { ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr); continue; }
+                HMENU sub = ::CreatePopupMenu();
+                ::AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, it.Text.c_str());
+                BuildMenu(sub, i);
+            } else {
+                bool isChildOf = false;
+                for (int ch : Items_[(size_t)parentIdx].Children) if (ch == i) { isChildOf = true; break; }
+                if (!isChildOf) continue;
+                if (it.Separator) { ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr); continue; }
+                if (!it.Children.empty()) {
+                    HMENU sub = ::CreatePopupMenu();
+                    ::AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, it.Text.c_str());
+                    BuildMenu(sub, i);
+                } else {
+                    ::AppendMenuW(menu, MF_STRING, (UINT)(FirstId + i), it.Text.c_str());
+                }
+            }
+        }
+    }
+};
+typedef MenuStrip ToolStrip;
+
+// ============================================================================
+//  ContextMenuStrip — TrackPopupMenu ile
+// ============================================================================
+class ContextMenuStrip : public Control {
+public:
+    struct Item { std::wstring Text; std::vector<int> Children; bool Separator = false; };
+    std::vector<Item> Items_;
+    HWND ParentHwnd = NULL;
+    std::function<void(int)> ItemClick;
+    static const UINT FirstId = 0x7100;
+    ContextMenuStrip(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        ParentHwnd = parent;
+        Id = id;
+        (void)text; (void)x; (void)y; (void)w; (void)h;
+    }
+    class ItemsProp {
+        ContextMenuStrip* c;
+    public:
+        explicit ItemsProp(ContextMenuStrip* o) : c(o) {}
+        ItemsProp* operator->() { return this; }
+        int Add(const std::wstring& text) { c->Items_.push_back({ text, {}, false }); return (int)c->Items_.size() - 1; }
+        int AddSeparator() { c->Items_.push_back({ L"", {}, true }); return (int)c->Items_.size() - 1; }
+        int AddChild(int parentIdx, const std::wstring& text) {
+            c->Items_.push_back({ text, {}, false });
+            int idx = (int)c->Items_.size() - 1;
+            if (parentIdx >= 0 && parentIdx < (int)c->Items_.size())
+                c->Items_[(size_t)parentIdx].Children.push_back(idx);
+            return idx;
+        }
+        int Count() const { return (int)c->Items_.size(); }
+        void Clear() { c->Items_.clear(); }
+    } Items{ this };
+    void Show(int screenX, int screenY) {
+        if (!ParentHwnd || Items_.empty()) return;
+        HMENU menu = ::CreatePopupMenu();
+        BuildMenu(menu, -1);
+        SetForegroundWindow(ParentHwnd);
+        int cmd = (int)TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                                      screenX, screenY, 0, ParentHwnd, nullptr);
+        DestroyMenu(menu);
+        if (cmd >= (int)FirstId && cmd < (int)FirstId + (int)Items_.size() && ItemClick)
+            ItemClick(cmd - (int)FirstId);
+    }
+    void Show(const Point& screenPoint) { Show(screenPoint.X, screenPoint.Y); }
+private:
+    void BuildMenu(HMENU menu, int parentIdx) {
+        for (int i = 0; i < (int)Items_.size(); i++) {
+            const Item& it = Items_[(size_t)i];
+            if (parentIdx < 0) {
+                if (it.Separator) { ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr); continue; }
+                if (!it.Children.empty()) {
+                    HMENU sub = ::CreatePopupMenu();
+                    ::AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, it.Text.c_str());
+                    BuildMenu(sub, i);
+                } else ::AppendMenuW(menu, MF_STRING, (UINT)(FirstId + i), it.Text.c_str());
+            } else {
+                bool isChildOf = false;
+                for (int ch : Items_[(size_t)parentIdx].Children) if (ch == i) { isChildOf = true; break; }
+                if (!isChildOf) continue;
+                if (it.Separator) { ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr); continue; }
+                if (!it.Children.empty()) {
+                    HMENU sub = ::CreatePopupMenu();
+                    ::AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, it.Text.c_str());
+                    BuildMenu(sub, i);
+                } else ::AppendMenuW(menu, MF_STRING, (UINT)(FirstId + i), it.Text.c_str());
+            }
+        }
+    }
+};
+
+// ============================================================================
+//  Panel / PictureBox / Timer
+// ============================================================================
+class Panel : public Control {
+public:
+    Panel(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        EnsurePanelClass();
+        Handle = CreateWindowExW(0, L"M2GOD_PANEL_GEN", text.c_str(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+    }
+    class BorderStyleProp {
+        Control* c;
+    public:
+        explicit BorderStyleProp(Control* o) : c(o) {}
+        BorderStyleProp& operator=(M2God::BorderStyle b) {
+            if (!c->Handle) return *this;
+            switch (b) {
+            case M2God::BorderStyle::None:        RestyleWindow(c->Handle, 0, WS_BORDER, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::FixedSingle: RestyleWindow(c->Handle, WS_BORDER, 0, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::Fixed3D:     RestyleWindow(c->Handle, 0, WS_BORDER, WS_EX_CLIENTEDGE, 0); break;
+            }
+            return *this;
+        }
+    } BorderStyle{ this };
+    bool AutoScroll = false;   // Win32'de otomatik kaydirma yok; bilgi amacli
+};
+
+// PictureBox — ozel pencere sinifi: Load/SizeMode/Image (PNG/JPG/GIF destekli)
+// ---------------------------------------------------------------------------
+//  GDI+ DINAMIK yukleyici: gdiplus.dll her Windows'ta hazirdir. Ek olarak
+//  HICbir .lib veya header GEREKMEZ — VS2019 ve mingw'de oldugu gibi derlenir.
+// ---------------------------------------------------------------------------
+struct M2GpApi {
+    void* mod = nullptr;
+    ULONG_PTR token = 0;
+    bool started = false;
+    int (WINAPI* Startup)(ULONG_PTR*, void*, void*) = nullptr;
+    void (WINAPI* Shutdown)(ULONG_PTR) = nullptr;
+    int (WINAPI* LoadImageFromFile)(const wchar_t*, void**) = nullptr;
+    int (WINAPI* DisposeImage)(void*) = nullptr;
+    int (WINAPI* CloneImage)(void*, void**) = nullptr;
+    int (WINAPI* GetImageWidth)(void*, unsigned int*) = nullptr;
+    int (WINAPI* GetImageHeight)(void*, unsigned int*) = nullptr;
+    int (WINAPI* CreateFromHDC)(HDC, void**) = nullptr;
+    int (WINAPI* DeleteGraphics)(void*) = nullptr;
+    int (WINAPI* DrawImageRect)(void*, void*, float, float, float, float) = nullptr;
+    int (WINAPI* SetInterpolationMode)(void*, int) = nullptr;
+
+    bool FunctionsOk() const {
+        return mod && Startup && LoadImageFromFile && CreateFromHDC
+            && DrawImageRect && GetImageWidth && GetImageHeight;
+    }
+    bool Ensure() {
+        if (!mod) return false;
+        if (!started) {
+            // GdiplusStartupInput ile ayni yerlesim (UINT32;void*;BOOL;BOOL)
+            struct In { unsigned int ver; void* dbg; int supbg; int supext; } in;
+            in.ver = 1; in.dbg = nullptr; in.supbg = 0; in.supext = 0;
+            started = (Startup(&token, &in, nullptr) == 0 /*Ok*/);
+        }
+        return started;
+    }
+};
+inline M2GpApi& M2Gp() {
+    static M2GpApi api;
+    if (!api.mod) {
+        api.mod = (void*)LoadLibraryW(L"gdiplus.dll");
+        if (api.mod) {
+            HMODULE m = (HMODULE)api.mod;
+#define M2GPLOAD(fld, name) api.fld = (decltype(api.fld))(void*)GetProcAddress(m, name)
+            M2GPLOAD(Startup,               "GdiplusStartup");
+            M2GPLOAD(Shutdown,              "GdiplusShutdown");
+            M2GPLOAD(LoadImageFromFile,     "GdipLoadImageFromFile");
+            M2GPLOAD(DisposeImage,          "GdipDisposeImage");
+            M2GPLOAD(CloneImage,            "GdipCloneImage");
+            M2GPLOAD(GetImageWidth,         "GdipGetImageWidth");
+            M2GPLOAD(GetImageHeight,        "GdipGetImageHeight");
+            M2GPLOAD(CreateFromHDC,         "GdipCreateFromHDC");
+            M2GPLOAD(DeleteGraphics,        "GdipDeleteGraphics");
+            M2GPLOAD(DrawImageRect,        "GdipDrawImageRect");
+            M2GPLOAD(SetInterpolationMode,  "GdipSetInterpolationMode");
+#undef M2GPLOAD
+        }
+    }
+    return api;
+}
+inline bool M2GdiplusEnsure() {
+    M2GpApi& g = M2Gp();
+    return g.FunctionsOk() && g.Ensure();
+}
+
+// ---------------------------------------------------------------------------
+//  M2God::Image — dosyadan resim (PNG/JPG/GIF/BMP/TIFF/ICO/EMF/WMF)
+//      pictureBox1->Image = M2God::Image::FromFile(L"resim.png");
+//      if (img) { int w = img.Width(); int h = img.Height(); }
+// ---------------------------------------------------------------------------
+class Image {
+    void* impl = nullptr;   // GpImage*
+public:
+    Image() {}
+    explicit Image(void* p) : impl(p) {}
+    Image(const Image& o) : impl(nullptr) {
+        if (o.impl && M2Gp().CloneImage) {
+            void* c = nullptr;
+            if (M2Gp().CloneImage(o.impl, &c) == 0 /*Ok*/ && c) impl = c;
+        }
+    }
+    Image& operator=(const Image& o) {
+        if (this != &o) {
+            Dispose();
+            if (o.impl && M2Gp().CloneImage) {
+                void* c = nullptr;
+                if (M2Gp().CloneImage(o.impl, &c) == 0 /*Ok*/ && c) impl = c;
+            }
+        }
+        return *this;
+    }
+    Image(Image&& o) : impl(o.impl) { o.impl = nullptr; }
+    Image& operator=(Image&& o) {
+        if (this != &o) { Dispose(); impl = o.impl; o.impl = nullptr; }
+        return *this;
+    }
+    ~Image() { Dispose(); }
+
+    static Image FromFile(const std::wstring& path) {
+        Image r;
+        if (M2GdiplusEnsure() && M2Gp().LoadImageFromFile) {
+            void* p = nullptr;
+            if (M2Gp().LoadImageFromFile(path.c_str(), &p) == 0 /*Ok*/ && p) r.impl = p;
+            else if (p && M2Gp().DisposeImage) M2Gp().DisposeImage(p);
+        }
+        return r;
+    }
+    bool IsValid() const { return impl != nullptr; }
+    operator bool() const { return impl != nullptr; }
+    int Width()  const { unsigned int v = 0; if (impl && M2Gp().GetImageWidth)  M2Gp().GetImageWidth(impl, &v);  return (int)v; }
+    int Height() const { unsigned int v = 0; if (impl && M2Gp().GetImageHeight) M2Gp().GetImageHeight(impl, &v); return (int)v; }
+    void* Native() const { return impl; }
+    void  Steal() { impl = nullptr; }
+    void  Dispose() { if (impl) { if (M2Gp().DisposeImage) M2Gp().DisposeImage(impl); impl = nullptr; } }
+};
+
+// ---------------------------------------------------------------------------
+//  PictureBox — resim kutusu
+//      pictureBox1->Image = M2God::Image::FromFile(L"resim.png");
+//      pictureBox1->Image = (HBITMAP)LoadImageW(...);            // eski BMP yolu
+//      pictureBox1->Load(L"resim.jpg");  pictureBox1->ImageLocation = L"x.png";
+//      pictureBox1->SizeMode = M2God::PictureBoxSizeMode::Zoom;
+// ---------------------------------------------------------------------------
+struct PicState {
+    HBITMAP bmp = nullptr;      // GDI yolu (LoadImage ile yuklenen BMP)
+    void* gimg = nullptr;       // GDI+ yolu (GpImage* — PNG/JPG/GIF/...)
+    int sm = 0;                 // M2God::PictureBoxSizeMode
+    std::wstring loc;
+};
+inline std::map<HWND, PicState>& PicTable() {
+    static std::map<HWND, PicState> tbl;
+    return tbl;
+}
+inline void M2PicNoImage(HDC dc, const RECT& rc) {
+    // resim-yok isareti (capraz cizgiler)
+    HPEN pen = CreatePen(PS_SOLID, 1, RGB(160, 160, 160));
+    HPEN op = (HPEN)SelectObject(dc, pen);
+    MoveToEx(dc, rc.left, rc.top, nullptr); LineTo(dc, rc.right, rc.bottom);
+    MoveToEx(dc, rc.right - 1, rc.top, nullptr); LineTo(dc, rc.left, rc.bottom - 1);
+    SelectObject(dc, op); DeleteObject(pen);
+}
+inline void M2DrawPic(HWND h, HDC dc, RECT rc, PicState& ps) {
+    COLORREF back = RGB(240, 240, 240);
+    HBRUSH br = CreateSolidBrush(back); FillRect(dc, &rc, br); DeleteObject(br);
+    int iw = 0, ih = 0;
+    if (ps.gimg) {
+        unsigned int w = 0, hh = 0;
+        if (M2Gp().GetImageWidth)  M2Gp().GetImageWidth(ps.gimg, &w);
+        if (M2Gp().GetImageHeight) M2Gp().GetImageHeight(ps.gimg, &hh);
+        iw = (int)w; ih = (int)hh;
+    } else if (ps.bmp) {
+        BITMAP bm;
+        if (GetObjectW(ps.bmp, sizeof(bm), &bm)) { iw = bm.bmWidth; ih = bm.bmHeight; }
+    }
+    if (iw <= 0 || ih <= 0) { M2PicNoImage(dc, rc); return; }
+    int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
+    int dx = 0, dy = 0, dw = iw, dh = ih;
+    bool stretch = false;
+    switch (ps.sm) {
+    case 1:  // StretchImage — kutuyu tamamen doldur (en-boy bozulabilir)
+        dw = cw; dh = ch; stretch = true; break;
+    case 2:  // AutoSize — kutuyu resme gore buyut
+        if (h) SetWindowPos(h, nullptr, 0, 0, iw, ih, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        break;
+    case 3: { // CenterImage — ortala (tasma kirpilir)
+        dx = (cw - iw) / 2 < 0 ? 0 : (cw - iw) / 2;
+        dy = (ch - ih) / 2 < 0 ? 0 : (ch - ih) / 2;
+        break; }
+    case 4: { // Zoom — en-boy koru, ortala
+        double sc = (double)cw / iw; if ((double)ih * sc > ch) sc = (double)ch / ih;
+        dw = (int)(iw * sc); dh = (int)(ih * sc);
+        dx = (cw - dw) / 2; dy = (ch - dh) / 2;
+        stretch = true; break; }
+    default:  // Normal — sol ust, dogal boyut
+        break;
+    }
+    if (ps.gimg) {
+        void* gfx = nullptr;
+        if (M2Gp().CreateFromHDC && M2Gp().CreateFromHDC(dc, &gfx) == 0 /*Ok*/ && gfx) {
+            if (stretch && M2Gp().SetInterpolationMode) M2Gp().SetInterpolationMode(gfx, 7 /*HighQualityBicubic*/);
+            if (M2Gp().DrawImageRect) M2Gp().DrawImageRect(gfx, ps.gimg, (float)dx, (float)dy, (float)dw, (float)dh);
+            if (M2Gp().DeleteGraphics) M2Gp().DeleteGraphics(gfx);
+        }
+        return;
+    }
+    HDC mdc = CreateCompatibleDC(dc);
+    HGDIOBJ old = SelectObject(mdc, ps.bmp);
+    if (stretch) {
+        SetStretchBltMode(dc, HALFTONE);
+        StretchBlt(dc, dx, dy, dw, dh, mdc, 0, 0, iw, ih, SRCCOPY);
+    } else {
+        BitBlt(dc, dx, dy, dw, dh, mdc, 0, 0, SRCCOPY);
+    }
+    SelectObject(mdc, old);
+    DeleteDC(mdc);
+}
+inline LRESULT CALLBACK M2PicProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+        RECT rc; GetClientRect(h, &rc);
+        std::map<HWND, PicState>::iterator it = PicTable().find(h);
+        if (it != PicTable().end()) M2DrawPic(h, dc, rc, it->second);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (m == WM_NCDESTROY) {   // resimleri serbest birak
+        std::map<HWND, PicState>::iterator it = PicTable().find(h);
+        if (it != PicTable().end()) {
+            if (it->second.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(it->second.gimg);
+            if (it->second.bmp) DeleteObject(it->second.bmp);
+            PicTable().erase(it);
+        }
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+inline void EnsurePicClass() {
+    static bool done = false; if (done) return; done = true;
+    WNDCLASSW wc = { 0 };
+    wc.lpfnWndProc = M2PicProc;
+    wc.hInstance   = GetModuleHandleW(nullptr);
+    wc.hCursor     = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+    wc.hbrBackground = nullptr;
+    wc.lpszClassName = L"M2GOD_PIC_GEN";
+    RegisterClassW(&wc);
+}
+class PictureBox : public Control {
+public:
+    PictureBox(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        EnsurePicClass();
+        Handle = CreateWindowExW(0, L"M2GOD_PIC_GEN", text.c_str(),
+            SS_NOTIFY | WS_CHILD | WS_VISIBLE | WS_BORDER, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) PicTable()[Handle] = PicState();
+    }
+    // pictureBox1->SizeMode = M2God::PictureBoxSizeMode::StretchImage;
+    class SizeModeProp {
+        PictureBox* c;
+    public:
+        explicit SizeModeProp(PictureBox* o) : c(o) {}
+        SizeModeProp& operator=(M2God::PictureBoxSizeMode v) {
+            if (c->Handle) { PicTable()[c->Handle].sm = (int)v; InvalidateRect(c->Handle, nullptr, TRUE); }
+            return *this;
+        }
+        operator int() const { return c->Handle ? PicTable()[c->Handle].sm : 0; }
+    } SizeMode{ this };
+    // pictureBox1->Image = M2God::Image::FromFile(L"resim.png");
+    // pictureBox1->Image = (HBITMAP)LoadImageW(...);   // eski BMP yolu
+    class ImageProp {
+        PictureBox* c;
+    public:
+        explicit ImageProp(PictureBox* o) : c(o) {}
+        ImageProp& operator=(M2God::Image img) {   // degerle al (gecici/kopya -> sahiplen)
+            if (c->Handle) {
+                PicState& st = PicTable()[c->Handle];
+                if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+                st.gimg = img.Native();
+                img.Steal();
+                st.bmp = nullptr;
+                InvalidateRect(c->Handle, nullptr, TRUE);
+            }
+            return *this;
+        }
+        ImageProp& operator=(HBITMAP bmp) {
+            if (c->Handle) {
+                PicState& st = PicTable()[c->Handle];
+                if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+                st.gimg = nullptr;
+                st.bmp = bmp;
+                InvalidateRect(c->Handle, nullptr, TRUE);
+            }
+            return *this;
+        }
+        operator HBITMAP() const { return c->Handle ? PicTable()[c->Handle].bmp : nullptr; }
+    } Image{ this };
+    class ImageLocationProp {
+        PictureBox* c;
+    public:
+        explicit ImageLocationProp(PictureBox* o) : c(o) {}
+        ImageLocationProp& operator=(const std::wstring& path) {
+            if (c->Handle) { PicTable()[c->Handle].loc = path; c->Load(path); }
+            return *this;
+        }
+        operator std::wstring() const { return c->Handle ? PicTable()[c->Handle].loc : std::wstring(); }
+    } ImageLocation{ this };
+    // --- Faz 2.6: BorderStyle ---
+    class BorderStyleProp {
+        Control* c;
+    public:
+        explicit BorderStyleProp(Control* o) : c(o) {}
+        BorderStyleProp& operator=(M2God::BorderStyle b) {
+            if (!c->Handle) return *this;
+            switch (b) {
+            case M2God::BorderStyle::None:        RestyleWindow(c->Handle, 0, WS_BORDER, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::FixedSingle: RestyleWindow(c->Handle, WS_BORDER, 0, 0, WS_EX_CLIENTEDGE); break;
+            case M2God::BorderStyle::Fixed3D:     RestyleWindow(c->Handle, 0, WS_BORDER, WS_EX_CLIENTEDGE, 0); break;
+            }
+            return *this;
+        }
+    } BorderStyle{ this };
+    // pictureBox1->Load(L"resim.png");  -> PNG/JPG/GIF/TIFF/BMP yukler, true = basarili
+    bool Load(const std::wstring& path) {
+        if (!Handle) return false;
+        PicState& st = PicTable()[Handle];
+        if (M2GdiplusEnsure() && M2Gp().LoadImageFromFile) {
+            void* p = nullptr;
+            if (M2Gp().LoadImageFromFile(path.c_str(), &p) == 0 /*Ok*/ && p) {
+                if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+                st.gimg = p; st.bmp = nullptr; st.loc = path;
+                InvalidateRect(Handle, nullptr, TRUE);
+                return true;
+            }
+            if (p && M2Gp().DisposeImage) M2Gp().DisposeImage(p);
+        }
+        HBITMAP bmp = (HBITMAP)LoadImageW(nullptr, path.c_str(), IMAGE_BITMAP, 0, 0,
+            LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+        if (bmp) {
+            if (st.gimg && M2Gp().DisposeImage) M2Gp().DisposeImage(st.gimg);
+            st.gimg = nullptr; st.bmp = bmp; st.loc = path;
+            InvalidateRect(Handle, nullptr, TRUE);
+            return true;
+        }
+        return false;
+    }
+};
+
+// ============================================================================
+//  Timer — gercek Win32 zamanlayici (SetTimer/KillTimer, WM_TIMER dispatch)
+// ============================================================================
+class Timer {
+    bool _enabled = false;
+public:
+    HWND Owner  = NULL;   // sahibi olan form penceresi
+    UINT Id     = 0;      // WM_TIMER wParam
+    UINT IntervalMs = 1000;
+    std::wstring Tag;
+
+    Timer(HWND owner, UINT id) : Owner(owner), Id(id) {}
+    virtual ~Timer() { Stop(); }
+
+    void Start() {
+        if (!Owner) return;
+        if (_enabled) KillTimer(Owner, Id);
+        SetTimer(Owner, Id, IntervalMs, nullptr);
+        _enabled = true;
+    }
+    void Stop() { if (Owner) KillTimer(Owner, Id); _enabled = false; }
+
+    // timer1->Enabled = false;  -> Stop()
+    // timer1->Enabled = true;   -> Start()
+    class EnabledProp {
+        Timer* t;
+    public:
+        explicit EnabledProp(Timer* o) : t(o) {}
+        EnabledProp& operator=(bool v) { if (v) t->Start(); else t->Stop(); return *this; }
+        operator bool() const { return t->_enabled; }
+    } Enabled{ this };
+
+    // timer1->Interval = 500; (calisir durumda aninda yeniden ayarlanir)
+    class IntervalProp {
+        Timer* t;
+    public:
+        explicit IntervalProp(Timer* o) : t(o) {}
+        IntervalProp& operator=(UINT ms) {
+            t->IntervalMs = ms;
+            if (t->_enabled && t->Owner) { KillTimer(t->Owner, t->Id); SetTimer(t->Owner, t->Id, ms, nullptr); }
+            return *this;
+        }
+        operator UINT() const { return t->IntervalMs; }
+    } Interval{ this };
+};
+
+// ============================================================================
+//  Bilesenler (gorsel olmayan) — NotifyIcon, ToolTip, BackgroundWorker, ...
+// ============================================================================
+static UINT M2NextIconId() { static UINT id = 1; return id++; }
+
+class NotifyIcon {
+public:
+    HWND Owner = NULL;
+    UINT Id = 0;
+    NOTIFYICONDATAW nid = { 0 };
+    bool Added = false;
+    std::wstring BalloonTipTitle, BalloonTipText;
+    std::function<void()> Click, DoubleClick;
+
+    NotifyIcon(HWND owner) : Owner(owner) {
+        Id = M2NextIconId();
+        ZeroMemory(&nid, sizeof(nid));
+        nid.cbSize = sizeof(nid);
+        nid.hWnd = owner;
+        nid.uID = Id;
+        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        nid.uCallbackMessage = WM_APP + 0x4E1;
+        nid.hIcon = LoadIconW(nullptr, (LPCWSTR)IDI_APPLICATION);
+        nid.szTip[0] = 0;
+    }
+    ~NotifyIcon() { Visible_Set(false); }
+    class IconProp {
+        NotifyIcon* c;
+    public:
+        explicit IconProp(NotifyIcon* o) : c(o) {}
+        IconProp& operator=(HICON h) {
+            if (c->nid.hIcon && c->nid.hIcon != LoadIconW(nullptr, (LPCWSTR)IDI_APPLICATION)) DestroyIcon(c->nid.hIcon);
+            c->nid.hIcon = h;
+            if (c->Added) Shell_NotifyIconW(NIM_MODIFY, &c->nid);
+            return *this;
+        }
+    } Icon{ this };
+    class TextProp {
+        NotifyIcon* c;
+    public:
+        explicit TextProp(NotifyIcon* o) : c(o) {}
+        TextProp& operator=(const std::wstring& s) {
+            M2StrNCpy(c->nid.szTip, s.c_str(), 63);
+            c->nid.szTip[63] = 0;
+            if (c->Added) Shell_NotifyIconW(NIM_MODIFY, &c->nid);
+            return *this;
+        }
+        operator std::wstring() const { return c->nid.szTip; }
+    } Text{ this };
+    void Visible_Set(bool v) {
+        if (v && !Added) { Shell_NotifyIconW(NIM_ADD, &nid); Added = true; }
+        else if (!v && Added) { Shell_NotifyIconW(NIM_DELETE, &nid); Added = false; }
+    }
+    class VisibleProp {
+        NotifyIcon* c;
+    public:
+        explicit VisibleProp(NotifyIcon* o) : c(o) {}
+        VisibleProp& operator=(bool v) { c->Visible_Set(v); return *this; }
+        operator bool() const { return c->Added; }
+    } Visible{ this };
+    void ShowBalloonTip(int timeoutMs = 500) {
+        nid.uFlags |= NIF_INFO;
+        M2StrNCpy(nid.szInfo, BalloonTipText.c_str(), 255); nid.szInfo[255] = 0;
+        M2StrNCpy(nid.szInfoTitle, BalloonTipTitle.c_str(), 63); nid.szInfoTitle[63] = 0;
+        nid.uTimeout = (UINT)timeoutMs;
+        nid.dwInfoFlags = NIIF_INFO;
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+        nid.uFlags &= ~NIF_INFO;
+    }
+    // uretilen WndProc WM_APP+0x4E1'de cagirir
+    void Dispatch(LPARAM lParam) {
+        if (lParam == WM_LBUTTONUP && Click) Click();
+        else if (lParam == WM_LBUTTONDBLCLK && DoubleClick) DoubleClick();
+    }
+};
+
+// ---------------------------------------------------------------------------
+class ToolTip {
+public:
+    HWND hTip = NULL;
+    HWND Owner = NULL;
+    ToolTip(HWND owner) : Owner(owner) {
+        hTip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+            WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+            CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+            owner, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (hTip) {
+            TOOLINFOW ti = { 0 };
+            ti.cbSize = sizeof(ti);
+            ti.hwnd = owner;
+            SendMessageW(hTip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+        }
+    }
+    ~ToolTip() { if (hTip) DestroyWindow(hTip); }
+    // toolTip1->SetToolTip(button1, L"Tikla");
+    void SetToolTip(HWND ctrl, const std::wstring& text) {
+        if (!hTip || !ctrl) return;
+        TOOLINFOW ti = { 0 };
+        ti.cbSize = sizeof(ti);
+        ti.hwnd = ctrl;
+        ti.uFlags = TTF_SUBCLASS | TTF_IDISHWND;
+        ti.uId = (UINT_PTR)ctrl;
+        ti.lpszText = (LPWSTR)text.c_str();
+        SendMessageW(hTip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
+        SendMessageW(hTip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+    }
+    void SetToolTip(Control* c, const std::wstring& text) { SetToolTip(c->Handle, text); }
+    class ActiveProp {
+        ToolTip* c;
+    public:
+        explicit ActiveProp(ToolTip* o) : c(o) {}
+        ActiveProp& operator=(bool v) { if (c->hTip) SendMessageW(c->hTip, TTM_ACTIVATE, v ? TRUE : FALSE, 0); return *this; }
+    } Active{ this };
+    class InitialDelayProp {
+        ToolTip* c;
+    public:
+        explicit InitialDelayProp(ToolTip* o) : c(o) {}
+        InitialDelayProp& operator=(int ms) { if (c->hTip) SendMessageW(c->hTip, TTM_SETDELAYTIME, (WPARAM)TTDT_INITIAL, (LPARAM)ms); return *this; }
+    } InitialDelay{ this };
+    class AutoPopDelayProp {
+        ToolTip* c;
+    public:
+        explicit AutoPopDelayProp(ToolTip* o) : c(o) {}
+        AutoPopDelayProp& operator=(int ms) { if (c->hTip) SendMessageW(c->hTip, TTM_SETDELAYTIME, (WPARAM)TTDT_AUTOPOP, (LPARAM)ms); return *this; }
+    } AutoPopDelay{ this };
+    class ReshowDelayProp {
+        ToolTip* c;
+    public:
+        explicit ReshowDelayProp(ToolTip* o) : c(o) {}
+        ReshowDelayProp& operator=(int ms) { if (c->hTip) SendMessageW(c->hTip, TTM_SETDELAYTIME, (WPARAM)TTDT_RESHOW, (LPARAM)ms); return *this; }
+    } ReshowDelay{ this };
+    class ToolTipTitleProp {
+        ToolTip* c;
+    public:
+        explicit ToolTipTitleProp(ToolTip* o) : c(o) {}
+        ToolTipTitleProp& operator=(const std::wstring& t) {
+            if (c->hTip) SendMessageW(c->hTip, TTM_SETTITLEW, (WPARAM)1, (LPARAM)t.c_str());
+            return *this;
+        }
+    } ToolTipTitle{ this };
+};
+
+// ---------------------------------------------------------------------------
+class BackgroundWorker {
+public:
+    HWND Owner = NULL;
+    bool WorkerReportsProgress = false;
+    bool WorkerSupportsCancellation = false;
+    std::function<void()> DoWork;             // arka plan is parcasinin gövdesi
+    std::function<void(int)> ProgressChanged; // ReportProgress ile tetiklenir
+    std::function<void()> RunWorkerCompleted;
+    volatile bool CancellationPendingFlag = false;
+    volatile bool IsBusyFlag = false;
+
+    BackgroundWorker() {}
+    void RunWorkerAsync() {
+        if (IsBusyFlag || !DoWork) return;
+        CancellationPendingFlag = false;
+        IsBusyFlag = true;
+        struct Ctx { BackgroundWorker* w; std::function<void()> work; };
+        Ctx* ctx = new Ctx{ this, DoWork };
+        HANDLE h = CreateThread(nullptr, 0, &BackgroundWorker::M2ThreadProc, ctx, 0, nullptr);
+        if (h) CloseHandle(h);
+    }
+    static DWORD WINAPI M2ThreadProc(LPVOID p) {
+        struct Ctx { BackgroundWorker* w; std::function<void()> work; };
+        Ctx* ctx = (Ctx*)p;
+        ctx->work();
+        ctx->w->IsBusyFlag = false;
+        if (ctx->w->Owner) PostMessageW(ctx->w->Owner, WM_APP + 0x4E3, 0, 0);
+        delete ctx;
+        return 0;
+    }
+    void CancelAsync() { CancellationPendingFlag = true; }
+    bool CancellationPending() const { return CancellationPendingFlag; }
+    bool IsBusy() const { return IsBusyFlag; }
+    void ReportProgress(int percent) {
+        if (Owner) PostMessageW(Owner, WM_APP + 0x4E2, (WPARAM)percent, 0);
+    }
+    // uretilen WndProc icinden:
+    void DispatchProgress(UINT percent) {
+        if (WorkerReportsProgress && ProgressChanged) ProgressChanged((int)percent);
+    }
+    void DispatchCompleted() { if (RunWorkerCompleted) RunWorkerCompleted(); }
+};
+
+// ---------------------------------------------------------------------------
+class Process {
+public:
+    std::wstring FileName, Arguments, WorkingDirectory;
+    HANDLE hProc = nullptr;
+
+    Process() {}
+    // Process::Start(L"notepad.exe") — statik kullanim
+    static int Start(const std::wstring& file, const std::wstring& args = L"") {
+        std::wstring cmd = L"\"" + file + L"\"";
+        if (!args.empty()) cmd += L" " + args;
+        STARTUPINFOW si = { 0 }; si.cb = sizeof(si);
+        PROCESS_INFORMATION pi = { 0 };
+        std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+        buf.push_back(0);
+        if (CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return (int)pi.dwProcessId;
+        }
+        return 0;
+    }
+    int Start() {
+        std::wstring cmd = FileName.empty() ? L"" : L"\"" + FileName + L"\"";
+        if (!Arguments.empty()) cmd += L" " + Arguments;
+        STARTUPINFOW si = { 0 }; si.cb = sizeof(si);
+        PROCESS_INFORMATION pi = { 0 };
+        std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+        buf.push_back(0);
+        if (CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE, 0, nullptr,
+            WorkingDirectory.empty() ? nullptr : WorkingDirectory.c_str(), &si, &pi)) {
+            CloseHandle(pi.hThread);
+            hProc = pi.hProcess;
+            return (int)pi.dwProcessId;
+        }
+        return 0;
+    }
+    bool WaitForExit(int timeoutMs = -1) {
+        if (!hProc) return false;
+        DWORD r = WaitForSingleObject(hProc, timeoutMs < 0 ? INFINITE : (DWORD)timeoutMs);
+        return r == WAIT_OBJECT_0;
+    }
+    bool HasExited() {
+        if (!hProc) return true;
+        DWORD code = 0;
+        if (GetExitCodeProcess(hProc, &code)) return code != STILL_ACTIVE;
+        return false;
+    }
+    int ExitCode() {
+        if (!hProc) return -1;
+        DWORD code = 0;
+        GetExitCodeProcess(hProc, &code);
+        return (int)code;
+    }
+    void Kill() {
+        if (hProc) { TerminateProcess(hProc, 1); CloseHandle(hProc); hProc = nullptr; }
+    }
+    ~Process() { if (hProc) CloseHandle(hProc); }
+};
+
+// ---------------------------------------------------------------------------
+class SerialPort {
+public:
+    std::wstring PortName = L"COM1";
+    int BaudRate = 9600;
+    int DataBits = 8;
+    std::wstring Parity = L"None";     // None/Even/Odd
+    std::wstring StopBits = L"One";
+    HANDLE hPort = nullptr;
+
+    SerialPort() {}
+    ~SerialPort() { Close(); }
+    bool IsOpen() const { return hPort && hPort != INVALID_HANDLE_VALUE; }
+    bool Open() {
+        if (IsOpen()) return true;
+        std::wstring name = (PortName.rfind(L"\\\\.\\", 0) == 0) ? PortName : L"\\\\.\\" + PortName;
+        hPort = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hPort == INVALID_HANDLE_VALUE) { hPort = nullptr; return false; }
+        std::wstring dcbStr = L"baud=" + std::to_wstring(BaudRate) + L" parity=" +
+            (Parity == L"Even" ? L"E" : Parity == L"Odd" ? L"O" : L"N") +
+            L" data=" + std::to_wstring(DataBits) +
+            L" stop=" + (StopBits == L"Two" ? L"2" : StopBits == L"OnePointFive" ? L"1" : L"1");
+        DCB dcb = { 0 }; dcb.DCBlength = sizeof(dcb);
+        if (!BuildCommDCBW(dcbStr.c_str(), &dcb)) { CloseHandle(hPort); hPort = nullptr; return false; }
+        if (!SetCommState(hPort, &dcb)) { CloseHandle(hPort); hPort = nullptr; return false; }
+        COMMTIMEOUTS to = { 0 };
+        to.ReadIntervalTimeout = 50;
+        to.ReadTotalTimeoutConstant = 50;
+        to.ReadTotalTimeoutMultiplier = 10;
+        to.WriteTotalTimeoutConstant = 50;
+        to.WriteTotalTimeoutMultiplier = 10;
+        SetCommTimeouts(hPort, &to);
+        return true;
+    }
+    void Close() { if (hPort) { CloseHandle(hPort); hPort = nullptr; } }
+    bool Write(const std::wstring& s) {
+        if (!IsOpen()) return false;
+        // UTF-16'yi ANSI'ye cevir (cihazlar genellikle ASCII ister)
+        int n = WideCharToMultiByte(CP_ACP, 0, s.c_str(), (int)s.size(), nullptr, 0, nullptr, nullptr);
+        std::vector<char> buf((size_t)n);
+        WideCharToMultiByte(CP_ACP, 0, s.c_str(), (int)s.size(), buf.data(), n, nullptr, nullptr);
+        DWORD wr = 0;
+        return WriteFile(hPort, buf.data(), (DWORD)buf.size(), &wr, nullptr) != 0;
+    }
+    bool WriteLine(const std::wstring& s) { return Write(s + L"\r\n"); }
+    std::wstring ReadExisting() {
+        if (!IsOpen()) return L"";
+        DWORD errors = 0;
+        COMSTAT cs = { 0 };
+        if (!ClearCommError(hPort, &errors, &cs) || cs.cbInQue == 0) return L"";
+        std::vector<char> buf((size_t)cs.cbInQue, 0);
+        DWORD rd = 0;
+        if (!ReadFile(hPort, buf.data(), (DWORD)buf.size(), &rd, nullptr) || rd == 0) return L"";
+        int wl = MultiByteToWideChar(CP_ACP, 0, buf.data(), (int)rd, nullptr, 0);
+        std::wstring out((size_t)(wl > 0 ? wl : 0), 0);
+        if (wl > 0) MultiByteToWideChar(CP_ACP, 0, buf.data(), (int)rd, &out[0], wl);
+        return out;
+    }
+};
+
+// ============================================================================
+//  Diyaloglar — OpenFileDialog / SaveFileDialog / ColorDialog / FontDialog /
+//              FolderBrowserDialog  (ShowDialog() -> M2God::DialogResult)
+// ============================================================================
+class FileDialog {
+public:
+    std::wstring FileName, Title, InitialDirectory;
+    std::wstring Filter = L"Tüm Dosyalar (*.*)|*.*";
+    int FilterIndex = 1;
+    bool Multiselect = false, RestoreDirectory = false, CheckFileExists = true;
+    std::vector<std::wstring> FileNames;
+    std::vector<wchar_t> bufFile;
+
+    void PrepBuf() {
+        bufFile.assign(32768, 0);
+        if (!FileName.empty()) M2StrNCpy(bufFile.data(), FileName.c_str(), 32767);
+    }
+    void PrepFilter(std::vector<wchar_t>& f) {
+        f.assign(Filter.begin(), Filter.end());
+        f.push_back(0);
+        for (auto& ch : f) if (ch == L'|') ch = 0;
+        f.push_back(0); f.push_back(0);
+    }
+    void CollectFiles(const OPENFILENAMEW& ofn) {
+        FileNames.clear();
+        wchar_t* p = ofn.lpstrFile;
+        if (ofn.Flags & OFN_ALLOWMULTISELECT) {
+            std::wstring dir(p);
+            size_t dl = dir.size();
+            p += dl + 1;
+            while (*p) { FileNames.push_back(dir + L"\\" + p); p += wcslen(p) + 1; }
+            if (FileNames.empty()) FileNames.push_back(dir);
+        }
+        FileName = ofn.lpstrFile;
+        if (FileNames.empty()) FileNames.push_back(FileName);
+    }
+};
+
+class OpenFileDialog : public FileDialog {
+public:
+    M2God::DialogResult ShowDialog() {
+        PrepBuf();
+        std::vector<wchar_t> f; PrepFilter(f);
+        OPENFILENAMEW ofn = { 0 };
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = Form::Handle;
+        ofn.lpstrFile = bufFile.data();
+        ofn.nMaxFile = (DWORD)bufFile.size();
+        ofn.lpstrFilter = f.data();
+        ofn.nFilterIndex = (DWORD)FilterIndex;
+        ofn.lpstrTitle = Title.empty() ? nullptr : Title.c_str();
+        ofn.lpstrInitialDir = InitialDirectory.empty() ? nullptr : InitialDirectory.c_str();
+        ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | (Multiselect ? OFN_ALLOWMULTISELECT : 0) |
+                    (RestoreDirectory ? OFN_NOCHANGEDIR : 0) |
+                    (CheckFileExists ? OFN_FILEMUSTEXIST : 0);
+        if (!GetOpenFileNameW(&ofn)) return M2God::DialogResult::Cancel;
+        CollectFiles(ofn);
+        return M2God::DialogResult::OK;
+    }
+};
+
+class SaveFileDialog : public FileDialog {
+public:
+    bool OverwritePrompt = true, CreatePrompt = false;
+    std::wstring DefaultExt;
+    M2God::DialogResult ShowDialog() {
+        PrepBuf();
+        std::vector<wchar_t> f; PrepFilter(f);
+        OPENFILENAMEW ofn = { 0 };
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = Form::Handle;
+        ofn.lpstrFile = bufFile.data();
+        ofn.nMaxFile = (DWORD)bufFile.size();
+        ofn.lpstrFilter = f.data();
+        ofn.nFilterIndex = (DWORD)FilterIndex;
+        ofn.lpstrTitle = Title.empty() ? nullptr : Title.c_str();
+        ofn.lpstrInitialDir = InitialDirectory.empty() ? nullptr : InitialDirectory.c_str();
+        ofn.lpstrDefExt = DefaultExt.empty() ? nullptr : DefaultExt.c_str();
+        ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST |
+                    (OverwritePrompt ? OFN_OVERWRITEPROMPT : 0) |
+                    (CreatePrompt ? OFN_CREATEPROMPT : 0) |
+                    (RestoreDirectory ? OFN_NOCHANGEDIR : 0);
+        if (!GetSaveFileNameW(&ofn)) return M2God::DialogResult::Cancel;
+        CollectFiles(ofn);
+        return M2God::DialogResult::OK;
+    }
+};
+
+class ColorDialog {
+public:
+    COLORREF Color = RGB(0, 0, 0);
+    bool FullOpen = false, AnyColor = true, SolidColorOnly = false;
+    M2God::DialogResult ShowDialog() {
+        CHOOSECOLORW cc = { 0 };
+        static COLORREF custom[16] = { 0 };
+        cc.lStructSize = sizeof(cc);
+        cc.hwndOwner = Form::Handle;
+        cc.rgbResult = Color;
+        cc.lpCustColors = custom;
+        cc.Flags = CC_FULLOPEN | CC_ANYCOLOR | (FullOpen ? CC_FULLOPEN : 0) |
+                   (AnyColor ? CC_ANYCOLOR : 0) | (SolidColorOnly ? CC_SOLIDCOLOR : 0);
+        if (!ChooseColorW(&cc)) return M2God::DialogResult::Cancel;
+        Color = cc.rgbResult;
+        return M2God::DialogResult::OK;
+    }
+};
+
+class FontDialog {
+public:
+    HFONT Font = nullptr;
+    std::wstring FontName_ = L"Segoe UI";
+    int FontSize_ = 9;
+    bool Bold = false, Italic = false, Underline = false, Strikeout = false;
+    COLORREF Color = RGB(0, 0, 0);
+    M2God::DialogResult ShowDialog() {
+        LOGFONTW lf = { 0 };
+        HDC dc = GetDC(nullptr);
+        lf.lfHeight = -MulDiv(FontSize_, GetDeviceCaps(dc, LOGPIXELSY), 72);
+        ReleaseDC(nullptr, dc);
+        M2StrNCpy(lf.lfFaceName, FontName_.c_str(), 31);
+        lf.lfWeight = Bold ? FW_BOLD : FW_NORMAL;
+        lf.lfItalic = Italic ? TRUE : FALSE;
+        lf.lfUnderline = Underline ? TRUE : FALSE;
+        lf.lfStrikeOut = Strikeout ? TRUE : FALSE;
+        CHOOSEFONTW cf = { 0 };
+        cf.lStructSize = sizeof(cf);
+        cf.hwndOwner = Form::Handle;
+        cf.lpLogFont = &lf;
+        cf.rgbColors = Color;
+        cf.Flags = CF_INITTOLOGFONTSTRUCT | CF_EFFECTS | CF_SCREENFONTS;
+        if (!ChooseFontW(&cf)) return M2God::DialogResult::Cancel;
+        FontName_ = lf.lfFaceName;
+        Bold = (lf.lfWeight >= FW_BOLD);
+        Italic = lf.lfItalic != 0;
+        Underline = lf.lfUnderline != 0;
+        Strikeout = lf.lfStrikeOut != 0;
+        FontSize_ = -MulDiv(lf.lfHeight, 72, GetDeviceCaps(dc, LOGPIXELSY));
+        Font = CreateFontIndirectW(&lf);
+        Color = cf.rgbColors;
+        return M2God::DialogResult::OK;
+    }
+    std::wstring FontName() const { return FontName_; }
+    int FontSize() const { return FontSize_; }
+};
+
+class FolderBrowserDialog {
+public:
+    std::wstring SelectedPath, Description;
+    M2God::DialogResult ShowDialog() {
+        BROWSEINFOW bi = { 0 };
+        wchar_t path[MAX_PATH] = L"";
+        bi.hwndOwner = Form::Handle;
+        bi.pszDisplayName = path;
+        bi.lpszTitle = Description.empty() ? L"Klasör seçin" : Description.c_str();
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+        LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+        if (!pidl) return M2God::DialogResult::Cancel;
+        if (!SHGetPathFromIDListW(pidl, path)) { CoTaskMemFree(pidl); return M2God::DialogResult::Cancel; }
+        CoTaskMemFree(pidl);
+        SelectedPath = path;
+        return M2God::DialogResult::OK;
+    }
+};
+
+// ============================================================================
+//  MsgBox — WinForms tarzi mesaj kutusu
+// ============================================================================
+inline DialogResult MsgBox(const std::wstring& text,
+                           const std::wstring& caption = L"",
+                           MessageBoxButtons buttons = MessageBoxButtons::OK,
+                           MessageBoxIcon icon = MessageBoxIcon::Information) {
+    UINT mb = MB_TOPMOST;
+    switch (buttons) {
+    case MessageBoxButtons::OKCancel:         mb |= MB_OKCANCEL; break;
+    case MessageBoxButtons::AbortRetryIgnore: mb |= MB_ABORTRETRYIGNORE; break;
+    case MessageBoxButtons::YesNoCancel:      mb |= MB_YESNOCANCEL; break;
+    case MessageBoxButtons::YesNo:            mb |= MB_YESNO; break;
+    case MessageBoxButtons::RetryCancel:      mb |= MB_RETRYCANCEL; break;
+    default:                                  mb |= MB_OK; break;
+    }
+    mb |= (UINT)icon;   // 16/32/48/64 == MB_ICONERROR/QUESTION/WARNING/INFORMATION
+    int r = MessageBoxW(Form::Handle ? Form::Handle : GetActiveWindow(),
+                        text.c_str(), caption.c_str(), mb);
+    return (DialogResult)r;   // IDOK(1)/IDCANCEL(2)/IDYES(6)/IDNO(7) ayni degerler
+}
+
+// Desteklenmeyen tipler icin yer tutucu kutu
+class Placeholder : public Control {
+public:
+    Placeholder(HWND parent, int id, const std::wstring& text, int x, int y, int w, int h) {
+        Handle = CreateWindowExW(WS_EX_CLIENTEDGE, L"STATIC", text.c_str(),
+            SS_NOTIFY | WS_CHILD | WS_VISIBLE | SS_CENTER, x, y, w, h,
+            parent, (HMENU)(INT_PTR)id, GetModuleHandleW(nullptr), nullptr);
+        Id = id;
+        if (Handle) SendMessageW(Handle, WM_SETFONT, (WPARAM)GetUIFont(), MAKELPARAM(TRUE, 0));
+    }
+};
+
+} // namespace M2God
