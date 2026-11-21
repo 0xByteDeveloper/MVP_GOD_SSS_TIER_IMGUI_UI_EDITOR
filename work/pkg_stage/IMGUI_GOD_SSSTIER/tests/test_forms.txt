@@ -1,0 +1,7 @@
+# ÇOK FORMLU: yeni form + geçiş + park/unpark veri korunumu
+add Button 60 80
+newform
+wait 10
+add Checkbox 40 40
+save state_forms.imgod
+quit

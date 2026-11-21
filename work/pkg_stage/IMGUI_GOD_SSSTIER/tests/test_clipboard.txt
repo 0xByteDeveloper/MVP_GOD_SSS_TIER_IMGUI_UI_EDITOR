@@ -1,0 +1,14 @@
+# YENİDEN ADLANDIRILMIŞ nesneleri kopyala → TİP SAYACI adlarıyla yapıştır
+add Button 60 80
+add Combo 60 130
+set button1 Name "denemebutton"
+set combo1 Name "denemecombobox"
+select denemebutton
+selectadd denemecombobox
+wait 20
+copy
+wait 5
+paste
+wait 10
+save state_clip.imgod
+quit
