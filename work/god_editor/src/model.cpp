@@ -179,6 +179,31 @@ std::deque<std::string> Model::DetachRedo() { auto r = redo; redo.clear(); retur
 void Model::AttachUndo(std::deque<std::string> u, std::deque<std::string> r) { undo.swap(u); redo.swap(r); }
 void Model::ClearUndo() { undo.clear(); redo.clear(); }
 
+// --- boyut yeteneği (tek gerçek kaynak) -------------------------------------
+// HATA DÜZELTİLDİ (kullanıcı: "combo/listbox gibi şeyler görsel olarak büyüyüp
+// küçülmüyo, ama özelliklerdeki Boyut değişiyo"): birçok widget tipi çizimde
+// c->w/c->h'yi HİÇ uygulamıyordu — yalnız özellik panelindeki sayı değişiyordu.
+// Artık her tipin GERÇEK ImGui boyut yeteneği tek yerde tanımlı ve canvas,
+// özellik paneli VE kod üretimi bu tek kaynağı kullanıyor:
+//   SIZECAP_FULL (2) — hem genişlik hem yükseklik (ImVec2 argüman)
+//   SIZECAP_W    (1) — yalnız genişlik (SetNextItemWidth; yükseklik ImGui sabiti)
+//   SIZECAP_AUTO (0) — içerikten ölçülür (özellikte "(otomatik)" gösterilir)
+int SizeCapOf(const Ctrl* c) {
+    if (!c) return SIZECAP_AUTO;
+    const std::string& t = c->type;
+    if (t == "Button")          return c->GetB("Small") ? SIZECAP_AUTO : SIZECAP_FULL; // SmallButton içerik ölçer
+    if (t == "ProgressBar" || t == "PlotLines" || t == "PlotHistogram" ||
+        t == "InputTextMultiline" || t == "ListBox" ||
+        t == "Panel" || t == "ChildWindow" || t == "GroupBox")
+                                 return SIZECAP_FULL;
+    if (t == "Combo" || t == "SliderFloat" || t == "SliderInt" ||
+        t == "DragFloat" || t == "DragInt" || t == "InputText" ||
+        t == "InputInt" || t == "InputFloat" || t == "Table")
+                                 return SIZECAP_W;      // SetNextItemWidth / outer_size.x
+    if (t == "ColorEdit4")       return c->GetB("AlphaPreview") ? SIZECAP_W : SIZECAP_AUTO; // NoInputs kare içerik ölçer
+    return SIZECAP_AUTO;   // Checkbox, RadioButton, Text*, Separator*, CollapsingHeader, TreeNode, TabBar...
+}
+
 // --- isim / ekleme ---------------------------------------------------------
 std::string Model::UniqueName(const std::string& type) {
     // WinForms/M2God adlandırma: tip adının İLK HARFİ KÜÇÜK (button1, radioButton1,

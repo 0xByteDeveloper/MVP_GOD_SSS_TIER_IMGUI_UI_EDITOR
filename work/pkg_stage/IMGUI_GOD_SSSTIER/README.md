@@ -49,6 +49,22 @@ göreceğin (birebir WYSIWYG).**
    fontları (Türkçe: ğ ş ı İ ö ü ç) + her form `<Ad>.cpp/.h` + boş gövdeli olay işleyiciler.
 12. **Çok formlu + park/unpark**: formlar arası geçişte model JSON ile güvenle saklanır/geri yüklenir.
 
+## Sürüm 4 — "combo/listbox büyüyüp küçülmüyo" raporuna göre düzeltilenler
+
+| Rapor | Çözüm |
+|---|---|
+| "Button büyüyüp küçülüyo ama **listbox, combobox ve bazı şeyler GÖRSEL boyutlanmıyo** — özelliklerdeki Boyut değişiyor ama görünmüyor" | **Kökte düzeltildi**: birçok widget tipi çizimde tasarım boyutunu (W/H) HİÇ uygulamıyordu; yalnız özellik panelindeki sayı değişiyordu (hayalet boyut). Artık her tipin GERÇEK ImGui boyut yeteneği tek yerde tanımlı (`SizeCapOf`) ve canvas + özellik paneli + kod üretimi bu TEK kaynağı kullanıyor |
+| Combo / Slider / Drag / InputText / InputInt / InputFloat / ColorEdit4 genişliği | `ImGui::SetNextItemWidth(w)` çizimde VE üretilen kodda (IGOD yapılarına `Width` alanı) uygulanır — sürükle-büyüt GÖRÜNÜR, derlenen uygulama birebir aynı |
+| ListBox TAM boyut | `BeginListBox(ImVec2(w, h))` — genişlik VE yükseklik görselde; `HeightItems` ↔ yükseklik iki yön senkron |
+| Table genişliği | `BeginTable(..., outer_size.x = w)` — editör ve üretim aynı |
+| Checkbox / RadioButton / Text / Separator / CollapsingHeader / TreeNode / TabBar | Dürüst WYSIWYG: ImGui'de bu denetimler İÇERİKTEN ölçülür — boyutları her kare GERÇEK çizim boyutuna senkronlanır; özellik panelinde **"(otomatik)"** gösterilir; **hayalet tutamaç yok** (boyutlanamayan yönde tutamaç hiç çizilmez) |
+| Tutamaçlar | Tipe göre MASKELENDİ: tam boyutlanan (Button/ProgressBar/Plot/Multiline/ListBox/Panel/Child/GroupBox) → 8 tutamaç; yalnız genişlik (Combo/Slider/Drag/Input/Color/Table) → SAĞ/SOL kenar tutamaçları (imleç EW); içerik boyutlu → tutamaç yok. Form: sağ/alt büyütme |
+| Özellik paneli Boyut satırı | FULL → düzenlenebilir `w, h`; W → `Genişlik` (yükseklik "(otomatik)"); AUTO → "(otomatik — içerikten ölçülür)". Tutamaçla boyut değişince `Width/Height/SizeArgW/H/HeightItems` özellikleri de AYNI sayıya senkronlanır |
+| Renk kutusu (ColorEdit4) kipi | Üretilen `IGOD::ColorEdit4` artık `NoInputs` bayrağını editörle AYNI şekilde bağlı — derlenen görünüm = editör görünümü |
+| Seçim çerçevesi konumu | Açık CollapsingHeader/TreeNode/TabBar seçim çerçevesi ÇOCUK öğelerin değil KENDİ dikdörtgeninin üzerine alındı |
+
+Test paketi **10 senaryo / 45 doğrulama**'ya çıktı: TEST 10 `objsize`/`dragobj` kancalarıyla GÖRSEL boyutları ölçer — combo +120 genişlik, listbox 260x180, slider +100, input +50, checkbox'un içerik boyutuna dönmesi, tablo outer_size, sağ tutamaç sürüklemesi (+80) ve modelde kalıcılık.
+
 ## Sürüm 3 — 3. tur kullanıcı raporlarına göre düzeltilenler
 
 | Rapor | Çözüm |
@@ -100,8 +116,7 @@ imgod_editor_x64.exe --open proje.imgod    # projeyle başla
 tests/run_tests.sh
 ```
 
-9 senaryo / 36 doğrulama: temel ekleme-özellik-kayıt · arm-yerleştir-rubber band-pano · tip sayaçlı adlandırma · çok formlu park/unpark · TEK yerleştirme · form boyutlandırma kesin delta + canvas sınırı · sağ tık seçim/menü/ESC koruması · Panel içine yerleştirme ·
-yeniden adlandırılmış nesnelerin TİP SAYACI adlarıyla yapıştırılması · çok formlu park/unpark.
+10 senaryo / 45 doğrulama: temel ekleme-özellik-kayıt · arm-yerleştir-rubber band-pano · tip sayaçlı adlandırma · çok formlu park/unpark · TEK yerleştirme · form boyutlandırma kesin delta + canvas sınırı · sağ tık seçim/menü/ESC koruması · Panel içine yerleştirme · kod üretimi · **widget GÖRSEL boyutlandırma (combo/listbox/slider/input/table + tutamaç sürüklemesi)**.
 Tüm etkileşimler gerçek WM mesajlarıyla (PostMessage) enjekte edilir — sahte değil.
 
 ## Üretilen proje düzeni

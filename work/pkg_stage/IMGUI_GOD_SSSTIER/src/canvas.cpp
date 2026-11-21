@@ -103,13 +103,35 @@ static ImGuiWindowFlags FormWinFlagsOf(const Model& m) {
 }
 
 // ---------------------------------------------------------------------------
-//  PushRect: gerçek çizim dikdörtgenini kaydet
+//  PushRect: gerçek çizim dikdörtgenini kaydet + WYSIWYG BOYUT SENKRONU
+static void SyncSizeProps(Ctrl* c, int w, int h) {
+    // "Width/Height/SizeArgW/SizeArgH" özellikleri tasarım boyutuyla aynı sayıyı
+    // göstersin (özellik paneli ↔ canvas ↔ kod üretimi tek gerçek).
+    auto sw = c->props.find("Width");   if (sw != c->props.end()) sw->second = std::to_string(w);
+    auto sh = c->props.find("Height"); if (sh != c->props.end()) sh->second = std::to_string(h);
+    auto swz = c->props.find("SizeArgW"); if (swz != c->props.end()) swz->second = std::to_string(w);
+    auto shz = c->props.find("SizeArgH"); if (shz != c->props.end()) shz->second = std::to_string(h);
+}
 static void PushRect(Ctrl* c, bool tray = false) {
     WidgetRect r; r.c = c;
     r.rmin = ImGui::GetItemRectMin();
     r.rmax = ImGui::GetItemRectMax();
     r.tray = tray;
     s_hitRects.push_back(r);
+    if (tray) return;
+    // HATA DÜZELTİLDİ (kullanıcı: "boyut küçülüp büyüse de görselde değişmiyor,
+    // ama özelliklerdeki Boyut değişiyor"): AUTO tipler her kare GERÇEK çizilen
+    // boyutla senkron; yalnız-genişlik tiplerde yükseklik gerçek çizimden gelir.
+    // Böylece özellik panelindeki Boyut daima görüntüyle AYNI — hayalet boyut yok.
+    int cap = SizeCapOf(c);
+    if (cap == SIZECAP_AUTO) {
+        int rw = (int)(r.rmax.x - r.rmin.x + 0.5f), rh = (int)(r.rmax.y - r.rmin.y + 0.5f);
+        if (rw > 0 && rw != c->w) { c->w = rw; SyncSizeProps(c, rw, rh); }
+        else if (rh > 0 && rh != c->h) { c->h = rh; SyncSizeProps(c, c->w, rh); }
+    } else if (cap == SIZECAP_W) {
+        int rh = (int)(r.rmax.y - r.rmin.y + 0.5f);
+        if (rh > 0 && rh != c->h) { c->h = rh; SyncSizeProps(c, c->w, rh); }  // yükseklik ImGui sabiti
+    }
 }
 // güvenli: widget çizilmediyse (0 boyut vb.) sağlam bir dikdörtgen kaydet
 static void PushRectFallback(Ctrl* c) {
@@ -160,6 +182,7 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         float mx = (float)atof(c->Get("Max", "100").c_str());
         const char* fmt = c->Get("Format", t == "SliderFloat" ? "%.1f" : "%d").c_str();
         ImGui::SetCursorPos(pos);
+        if (c->w > 0) ImGui::SetNextItemWidth((float)c->w);   // BOYUT UYGULA (W)
         if (t == "SliderFloat") ImGui::SliderFloat(WLabel(c, "Text", "Değer").c_str(), &fv, mn, mx, fmt);
         else ImGui::SliderInt(WLabel(c, "Text", "Değer").c_str(), &iv, (int)mn, (int)mx, fmt);
         PushRect(c);
@@ -169,6 +192,7 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         float mn = (float)atof(c->Get("Min", "0").c_str());
         float mx = (float)atof(c->Get("Max", "100").c_str());
         ImGui::SetCursorPos(pos);
+        if (c->w > 0) ImGui::SetNextItemWidth((float)c->w);   // BOYUT UYGULA (W)
         if (t == "DragFloat") ImGui::DragFloat(WLabel(c, "Text", "Değer").c_str(), &fv, (float)atof(c->Get("Speed", "1").c_str()), mn, mx);
         else ImGui::DragInt(WLabel(c, "Text", "Değer").c_str(), &iv, (float)atof(c->Get("Speed", "1").c_str()), (int)mn, (int)mx);
         PushRect(c);
@@ -186,8 +210,10 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         ImGuiInputTextFlags fl = ImGuiInputTextFlags_ReadOnly;
         if (c->GetB("Password")) fl |= ImGuiInputTextFlags_Password;
         ImGui::SetCursorPos(pos);
-        if (t == "InputText")
+        if (t == "InputText") {
+            if (c->w > 0) ImGui::SetNextItemWidth((float)c->w);   // BOYUT UYGULA (W)
             ImGui::InputText(WLabel(c, "Text", "Yazı").c_str(), &buf[0], (int)buf.size(), fl);
+        }
         else {
             ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "280").c_str())), (float)(c->h ? c->h : atoi(c->Get("Height", "120").c_str())));
             ImGui::InputTextMultiline(WLabel(c, "Text", "Not").c_str(), &buf[0], buf.size(), sz, fl);
@@ -197,6 +223,7 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         int iv = atoi(c->Get("Value", "0").c_str());
         float fv = (float)atof(c->Get("Value", "0").c_str());
         ImGui::SetCursorPos(pos);
+        if (c->w > 0) ImGui::SetNextItemWidth((float)c->w);   // BOYUT UYGULA (W)
         if (t == "InputInt") ImGui::InputInt(WLabel(c, "Text", "Sayı").c_str(), &iv, atoi(c->Get("Step", "1").c_str()));
         else ImGui::InputFloat(WLabel(c, "Text", "Sayı").c_str(), &fv, (float)atof(c->Get("Step", "1").c_str()));
         PushRect(c);
@@ -211,12 +238,17 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         const char* cur = (sel >= 0 && sel < (int)ptrs.size()) ? ptrs[sel] : "";
         ImGui::SetCursorPos(pos);
         if (t == "Combo") {
+            if (c->w > 0) ImGui::SetNextItemWidth((float)c->w);   // BOYUT UYGULA (W)
             if (ImGui::BeginCombo(WLabel(c, "Text", "Seçim").c_str(), cur)) ImGui::EndCombo();
             PushRect(c);
         } else {
+            // LISTBOX — TAM BOYUT (W+H): genişlik c->w, yükseklik c->h; h boşken
+            // HeightItems satır sayısından (uyumluluk). Sürükle-büyüt artık GÖRÜNÜR.
             int hi = atoi(c->Get("HeightItems", "5").c_str());
-            float hgt = ImGui::GetTextLineHeightWithSpacing() * (hi + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
-            if (ImGui::BeginListBox(WLabel(c, "Text", "Liste").c_str(), ImVec2(0.0f, hgt))) {
+            float hgt = c->h > 0 ? (float)c->h
+                       : ImGui::GetTextLineHeightWithSpacing() * (hi + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
+            float wid = c->w > 0 ? (float)c->w : 0.0f;
+            if (ImGui::BeginListBox(WLabel(c, "Text", "Liste").c_str(), ImVec2(wid, hgt))) {
                 for (auto& p : ptrs) ImGui::Selectable((std::string(p) + "##" + c->name).c_str(), false);
                 ImGui::EndListBox();
             }
@@ -228,6 +260,8 @@ static void DrawCtrl(Ctrl* c, Model& m) {
                     atof(c->Get("B", "255").c_str()) / 255.0f,
                     atof(c->Get("A", "255").c_str()) / 255.0f);
         ImGui::SetCursorPos(pos);
+        // genişlik YALNIZ girişli kipte görsel etki yapar (NoInputs kare = içerik ölçer)
+        if (c->w > 0 && c->GetB("AlphaPreview")) ImGui::SetNextItemWidth((float)c->w);
         ImGui::ColorEdit4(WLabel(c, "Text", "Renk").c_str(), &col.x,
                           (c->GetB("AlphaPreview") ? 0 : ImGuiColorEditFlags_NoInputs));
         PushRect(c);
@@ -319,14 +353,15 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         ImGuiTreeNodeFlags fl = c->GetB("DefaultOpen") ? ImGuiTreeNodeFlags_DefaultOpen : 0;
         bool open = (t == "CollapsingHeader") ? ImGui::CollapsingHeader(WLabel(c, "Text", "Başlık").c_str(), fl)
                                               : ImGui::TreeNodeEx(WLabel(c, "Text", "Düğüm").c_str(), fl);
+        PushRect(c);   // rect = başlığın kendisi (çocuklar çizilmeden ÖNCE al)
         if (open) {
             for (Ctrl* ch : m.ChildrenOf(c)) DrawCtrl(ch, m);
             if (t == "TreeNode") ImGui::TreePop();
         }
-        PushRect(c);
     } else if (t == "TabBar") {
         ImGui::SetCursorPos(pos);
         if (ImGui::BeginTabBar(c->name.c_str(), ImGuiTabBarFlags_None)) {
+            PushRect(c);   // rect = sekme çubuğu (sekme öğeleri çizilmeden ÖNCE al)
             for (auto& s : SplitW(Utf8ToWideStr(c->Get("Items", "Genel|Ayarlar")), L'|')) {
                 std::string title = WideStrToUtf8(s);
                 if (ImGui::BeginTabItem(title.c_str())) {
@@ -337,8 +372,9 @@ static void DrawCtrl(Ctrl* c, Model& m) {
                 }
             }
             ImGui::EndTabBar();
+        } else {
+            PushRectFallback(c);
         }
-        PushRect(c);
     } else if (t == "Table") {
         ImGui::SetCursorPos(pos);
         int cols = atoi(c->Get("Columns", "3").c_str());
@@ -346,7 +382,8 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         std::vector<std::string> heads;
         for (auto& s : SplitW(Utf8ToWideStr(c->Get("Items", "Sütun1|Sütun2|Sütun3")), L'|'))
             heads.push_back(WideStrToUtf8(s));
-        if (ImGui::BeginTable(c->name.c_str(), cols, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImVec2 outer((float)(c->w > 0 ? c->w : 0), 0.0f);   // BOYUT UYGULA (W — outer_size)
+        if (ImGui::BeginTable(c->name.c_str(), cols, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg, outer)) {
             for (auto& h : heads) ImGui::TableSetupColumn(h.c_str());
             ImGui::TableHeadersRow();
             for (int r = 0; r < rows; r++) {
@@ -406,11 +443,11 @@ static void HandleCorners(ImVec2 rmin, ImVec2 rmax, ImVec2 out[8]) {
     out[6] = ImVec2(rmin.x, rmax.y);
     out[7] = ImVec2(rmin.x, (rmin.y + rmax.y) / 2);
 }
-static int HandleIndexAt(ImVec2 pt, ImVec2 rmin, ImVec2 rmax, float hs) {
+static int HandleIndexAt(ImVec2 pt, ImVec2 rmin, ImVec2 rmax, float hs, unsigned mask) {
     ImVec2 c[8];
     HandleCorners(rmin, rmax, c);
     for (int i = 0; i < 8; i++)
-        if (fabsf(pt.x - c[i].x) <= hs && fabsf(pt.y - c[i].y) <= hs) return i;
+        if ((mask & (1u << i)) && fabsf(pt.x - c[i].x) <= hs && fabsf(pt.y - c[i].y) <= hs) return i;
     return -1;
 }
 // form yalnızca sağ/alt kenarlarından BÜYÜR (sol-üst köşe sabit — M2God/VS gibi):
@@ -435,14 +472,30 @@ static ImGuiMouseCursor CursorOfHandle(int i) {
     }
     return ImGuiMouseCursor_Arrow;
 }
+// ---------------------------------------------------------------------------
+//  TİP YETENEĞİNE GÖRE TUTAMAÇ MASKESİ (bit i = tutamaç i etkin):
+//  FULL → 8 tutamaç; W → yalnız sağ/sol kenar (genişlik); AUTO → tutamaç yok.
+//  "Görünmeyen boyutu" tutamaçla vaat etmeyiz: ImGui'de yüksekliği sabit olan
+//  denetimlerde dikey tutamaç hiç gösterilmez (hayalet boyut hatasının kökü budur).
+static unsigned HandleMaskOf(const Ctrl* c) {
+    switch (SizeCapOf(c)) {
+    case SIZECAP_FULL: return 0xFFu;
+    case SIZECAP_W:    return (1u << 3) | (1u << 7);   // 3:sağ 7:sol kenar
+    default:           return 0u;                     // içerik boyutlu — tutamaç yok
+    }
+}
+#define FORM_HANDLE_MASK ((1u<<2)|(1u<<3)|(1u<<4)|(1u<<5)|(1u<<6))  // form: sağ/alt büyütme
 // sürükleme sırasında uygulanacak tutamaç (nesne form-göreli)
 static void ApplyHandle(Ctrl* c, int handle, ImVec2 d) {
+    int cap = SizeCapOf(c);
     int nx = c->x, ny = c->y, nw = s_origW, nh = s_origH;
     if (handle == 0 || handle == 6 || handle == 7) { nw = s_origW - (int)d.x; nx = s_origX + (int)d.x; }
     if (handle == 0 || handle == 1 || handle == 2) { nh = s_origH - (int)d.y; ny = s_origY + (int)d.y; }
     if (handle == 2 || handle == 3 || handle == 4) nw = s_origW + (int)d.x;
     if (handle == 4 || handle == 5 || handle == 6) nh = s_origH + (int)d.y;
-    nw = ImMax(nw, 12); nh = ImMax(nh, 8);
+    // tip farkındalı minimumlar: genişliği ayarlanabilen tipte çok dar kutu anlamsız
+    nw = ImMax(nw, cap == SIZECAP_FULL ? 12 : 24);
+    if (cap == SIZECAP_FULL) nh = ImMax(nh, 8);
     if (g_snapEnabled) {
         nx = (nx + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
         ny = (ny + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
@@ -450,6 +503,16 @@ static void ApplyHandle(Ctrl* c, int handle, ImVec2 d) {
         nh = (nh + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
     }
     c->x = nx; c->y = ny; c->w = nw; c->h = nh;
+    // BOYUT↔ÖZELLİK SENKRONU: tutamaçla değişince Width/Height/SizeArg/HeightItems
+    // de aynı sayıyı gösterir — özellik paneli ve kod üretimi daima görüntüyle aynı.
+    SyncSizeProps(c, nw, nh);
+    if (c->type == "ListBox") {
+        float lh = ImGui::GetTextLineHeightWithSpacing();
+        float fp = ImGui::GetStyle().FramePadding.y * 2.0f;
+        int items = (int)((nh - fp) / lh - 0.25f + 0.5f);
+        if (items < 1) items = 1;
+        c->props["HeightItems"] = std::to_string(items);
+    }
     g_modelDirty = true;
 }
 static void ApplyFormHandle(Model& m, int handle, ImVec2 d) {
@@ -479,7 +542,8 @@ static void ApplyFormHandle(Model& m, int handle, ImVec2 d) {
 static bool s_formClamped = false;
 
 // seçim çerçevesi + tutamaçlar çiz (foreground — her şeyin üstünde)
-static void DrawSelFrame(ImDrawList* fg, ImVec2 rmin, ImVec2 rmax, bool primary, bool formFrame) {
+// mask: çizilecek tutamaçlar (bit i) — 0 = yalnız çerçeve, tutamaç yok
+static void DrawSelFrame(ImDrawList* fg, ImVec2 rmin, ImVec2 rmax, bool primary, bool formFrame, unsigned mask = 0xFFu) {
     ImU32 accent = primary ? IM_COL32(255, 176, 32, 255) : IM_COL32(255, 200, 80, 235);
     fg->AddRect(ImVec2(rmin.x - 2, rmin.y - 2), ImVec2(rmax.x + 2, rmax.y + 2), accent, 0.0f, 0, primary ? 1.5f : 1.8f);
     if (!primary) return;
@@ -487,6 +551,7 @@ static void DrawSelFrame(ImDrawList* fg, ImVec2 rmin, ImVec2 rmax, bool primary,
     HandleCorners(rmin, rmax, c);
     float hs = 4.5f;
     for (int i = 0; i < 8; i++) {
+        if (!(mask & (1u << i))) continue;   // tip bu yönde boyutlanamaz — tutamaç yok
         fg->AddRectFilled(ImVec2(c[i].x - hs, c[i].y - hs), ImVec2(c[i].x + hs, c[i].y + hs), accent);
         fg->AddRect(ImVec2(c[i].x - hs, c[i].y - hs), ImVec2(c[i].x + hs, c[i].y + hs), IM_COL32(0, 0, 0, 255));
     }
@@ -706,10 +771,10 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
         s_formHandle = -1;
     }
 
-    // tutamaç üzerinde imleç + tık yakalama
+    // tutamaç üzerinde imleç + tık yakalama (yalnız TİPİN BOYUTLANABİLDİĞİ kenarlar)
     float hs = 5.5f;
     if (havePrimaryRect && s_dragHandle < 0 && !ctxOpen) {
-        int hi = HandleIndexAt(mp, prMin, prMax, hs);
+        int hi = HandleIndexAt(mp, prMin, prMax, hs, HandleMaskOf(primary));
         if (hi >= 0) {
             ImGui::SetMouseCursor(CursorOfHandle(hi));
             if (ImGui::IsMouseClicked(0)) {
@@ -849,11 +914,11 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
         for (auto& r : s_hitRects)
             if (r.c == c && !r.tray) { DrawSelFrame(fg, r.rmin, r.rmax, false, false); break; }
     }
-    // birincil seçim: dolu tutamaçlı çerçeve
-    if (havePrimaryRect) DrawSelFrame(fg, prMin, prMax, true, false);
-    // form seçimi: form çerçevesi + köşe tutamaçları
+    // birincil seçim: dolu tutamaçlı çerçeve (tip yeteneğine göre tutamaç maskesi)
+    if (havePrimaryRect) DrawSelFrame(fg, prMin, prMax, true, false, HandleMaskOf(primary));
+    // form seçimi: form çerçevesi + köşe tutamaçları (sağ/alt büyütme kenarları)
     if (m.formSelected)
-        DrawSelFrame(fg, s_formPos, ImVec2(s_formPos.x + s_formSize.x, s_formPos.y + s_formSize.y), true, true);
+        DrawSelFrame(fg, s_formPos, ImVec2(s_formPos.x + s_formSize.x, s_formPos.y + s_formSize.y), true, true, FORM_HANDLE_MASK);
 
     // ================= 6) yerleştirme modu göstergesi ========================
     if (!g_armTool.empty()) {

@@ -50,27 +50,42 @@ struct RadioButton {
 };
 struct SliderFloat {
     std::string Text = "Değer";  float Value = 0, Min = 0, Max = 100;
-    std::string Format = "%.1f";
+    std::string Format = "%.1f";  float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
     SliderFloat() {}
     SliderFloat(const std::string& t, float v, float mn, float mx) : Text(t), Value(v), Min(mn), Max(mx) {}
-    bool Draw() { return ImGui::SliderFloat(Text.c_str(), &Value, Min, Max, Format.c_str()); }
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::SliderFloat(Text.c_str(), &Value, Min, Max, Format.c_str());
+    }
 };
 struct SliderInt {
     std::string Text = "Değer";  int Value = 0, Min = 0, Max = 100;
-    std::string Format = "%d";
-    bool Draw() { return ImGui::SliderInt(Text.c_str(), &Value, Min, Max, Format.c_str()); }
+    std::string Format = "%d";  float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::SliderInt(Text.c_str(), &Value, Min, Max, Format.c_str());
+    }
 };
 struct DragFloat {
     std::string Text = "Değer";  float Value = 0, Min = 0, Max = 100, Speed = 1;
-    bool Draw() { return ImGui::DragFloat(Text.c_str(), &Value, Speed, Min, Max); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::DragFloat(Text.c_str(), &Value, Speed, Min, Max);
+    }
 };
 struct DragInt {
     std::string Text = "Değer";  int Value = 0, Min = 0, Max = 100; float Speed = 1;
-    bool Draw() { return ImGui::DragInt(Text.c_str(), &Value, Speed, Min, Max); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::DragInt(Text.c_str(), &Value, Speed, Min, Max);
+    }
 };
 struct InputText {
     std::string Text = "Yazı";   std::string Value;  std::string Hint;
     bool Password = false;  bool ReadOnly = false;
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
     char Buf[512] = {};  bool InitBuf = false;  bool EnterPressed = false;
     InputText() {}
     bool Draw() {
@@ -78,6 +93,7 @@ struct InputText {
         ImGuiInputTextFlags fl = 0;
         if (Password) fl |= ImGuiInputTextFlags_Password;
         if (ReadOnly) fl |= ImGuiInputTextFlags_ReadOnly;
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
         bool ch = ImGui::InputText(Text.c_str(), Buf, sizeof Buf, fl);
         if (!Hint.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Hint.c_str());
         EnterPressed = ImGui::IsItemEdited() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsItemDeactivated());
@@ -98,18 +114,28 @@ struct InputTextMultiline {
 };
 struct InputInt {
     std::string Text = "Sayı";  int Value = 0, Step = 1;
-    bool Draw() { return ImGui::InputInt(Text.c_str(), &Value, Step); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::InputInt(Text.c_str(), &Value, Step);
+    }
 };
 struct InputFloat {
     std::string Text = "Sayı";  float Value = 0; float Step = 1;
-    bool Draw() { return ImGui::InputFloat(Text.c_str(), &Value, Step); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::InputFloat(Text.c_str(), &Value, Step);
+    }
 };
 struct Combo {
     std::string Text = "Seçim";  std::vector<std::string> Items;  int Selected = 0;
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG — SetNextItemWidth)
     Combo() {}
     Combo(const std::vector<std::string>& it) : Items(it) {}
     bool Draw() {
         const char* cur = (Selected >= 0 && Selected < (int)Items.size()) ? Items[Selected].c_str() : "";
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
         if (ImGui::BeginCombo(Text.c_str(), cur)) {
             for (int i = 0; i < (int)Items.size(); i++) {
                 bool sel = (i == Selected);
@@ -123,9 +149,12 @@ struct Combo {
 };
 struct ListBox {
     std::string Text = "Liste";  std::vector<std::string> Items;  int Selected = 0;  int HeightItems = 5;
+    ImVec2 Size = ImVec2(0, 0);   // tasarım boyutu — y<=0: HeightItems'ten otomatik (WYSIWYG)
     bool Draw() {
-        float h = ImGui::GetTextLineHeightWithSpacing() * (HeightItems + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
-        if (ImGui::BeginListBox(Text.c_str(), ImVec2(0.0f, h))) {
+        ImVec2 sz = Size;
+        if (sz.y <= 0.0f)
+            sz.y = ImGui::GetTextLineHeightWithSpacing() * (HeightItems + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
+        if (ImGui::BeginListBox(Text.c_str(), sz)) {
             for (int i = 0; i < (int)Items.size(); i++) {
                 if (ImGui::Selectable(Items[i].c_str(), i == Selected)) Selected = i;
             }
@@ -136,7 +165,12 @@ struct ListBox {
 };
 struct ColorEdit4 {
     std::string Text = "Renk";  ImVec4 Col = ImVec4(1, 1, 1, 1);
-    bool Draw() { return ImGui::ColorEdit4(Text.c_str(), &Col.x); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG — girişli kip)
+    bool NoInputs = true;   // true: yalnız renk karesi (canvas ile aynı kip)
+    bool Draw() {
+        if (Width > 0 && !NoInputs) ImGui::SetNextItemWidth(Width);
+        return ImGui::ColorEdit4(Text.c_str(), &Col.x, NoInputs ? ImGuiColorEditFlags_NoInputs : 0);
+    }
 };
 struct ProgressBar {
     float Value = 0.5f;  std::string Overlay;  ImVec2 Size = ImVec2(200, 18);
@@ -244,8 +278,10 @@ struct ModalPopup {
 struct Table {
     std::string Text = "Tablo";  int Columns = 3, Rows = 3;
     std::vector<std::string> Headers;
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG — outer_size.x)
     void Draw() {
-        if (ImGui::BeginTable((Text + "_tbl").c_str(), Columns, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImVec2 outer(Width > 0 ? Width : 0.0f, 0.0f);
+        if (ImGui::BeginTable((Text + "_tbl").c_str(), Columns, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg, outer)) {
             for (auto& h : Headers) ImGui::TableSetupColumn(h.c_str());
             ImGui::TableHeadersRow();
             for (int r = 0; r < Rows; r++) {

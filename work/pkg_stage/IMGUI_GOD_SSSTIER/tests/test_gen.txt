@@ -1,4 +1,4 @@
-# DenemImgui örnek üretimi — Panel + renk + stil + çok nesne
+# DenemImgui örnek üretimi — Panel + renk + stil + çok nesne + BOYUTLU widget'lar
 projname DenemImgui
 add Panel 24 24
 set panel1 Width "370"
@@ -18,12 +18,17 @@ add Checkbox 24 320
 set checkbox1 Text "Seçeneğim"
 add SliderFloat 24 360
 set sliderFloat1 Value "40"
+set sliderFloat1 Width "280"
 add Combo 24 400
-add ProgressBar 24 450
+set combo1 Width "300"
+add ListBox 24 440
+set listBox1 Width "240"
+set listBox1 Height "110"
+add ProgressBar 24 570
 set progressBar1 Value "0.7"
-add Text 24 500
+add Text 24 620
 set text1 Text "Merhaba Dünya"
-form 430 560
+form 430 690
 wait 5
 gen Z:/home/z/my-project/work/gen_target
 quit

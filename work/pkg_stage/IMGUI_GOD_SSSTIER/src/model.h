@@ -29,6 +29,16 @@ struct Ctrl {
     }
 };
 
+// ---------------------------------------------------------------------------
+//  boyut yeteneği sabitleri — canvas/özellik paneli/kod üretimi ORTAK gerçeği
+//  (kullanıcı hatası: combo/listbox vb. görsel boyutlanmıyordu, yalnız sayı değişiyordu)
+enum {
+    SIZECAP_AUTO = 0,   // içerikten ölçülür — tutamaç yok, özellik "(otomatik)"
+    SIZECAP_W    = 1,   // yalnız genişlik ayarlanır (SetNextItemWidth)
+    SIZECAP_FULL = 2    // hem genişlik hem yükseklik (ImVec2)
+};
+int SizeCapOf(const Ctrl* c);
+
 class Model {
 public:
     // Form (kök) özellikleri

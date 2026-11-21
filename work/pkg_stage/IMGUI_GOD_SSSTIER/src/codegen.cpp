@@ -183,6 +183,11 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
             Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "280").c_str(), nullptr, 10),
                                             c->h ? c->h : (int)strtol(NumOf(c, "Height", "120").c_str(), nullptr, 10)));
         }
+        // BOYUT (WYSIWYG): genişlik tasarım değerinden — canvas SetNextItemWidth ile
+        // AYNI değeri uygular; derlenen uygulama da birebir aynı genişlikte çizilir.
+        // (InputTextMultiline hariç — onun Size(w,h) zaten bağlı)
+        if (t != "InputTextMultiline")
+            Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
         std::string defEv = (t == "InputText" || t == "InputTextMultiline") ? "TextChanged" : "ValueChanged";
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, defEv) << "();\n";
@@ -204,6 +209,12 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
         Bind(ctx, c, "Selected = " + std::to_string((int)strtol(NumOf(c, "Selected", "0").c_str(), nullptr, 10)));
         if (t == "ListBox")
             Bind(ctx, c, "HeightItems = " + std::to_string((int)strtol(NumOf(c, "HeightItems", "5").c_str(), nullptr, 10)));
+        // BOYUT (WYSIWYG): Combo genişliği SetNextItemWidth ile; ListBox TAM boyutu
+        // (w,h) BeginListBox'a — canvas'la birebir aynı değerler.
+        if (t == "Combo")
+            Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
+        if (t == "ListBox")
+            Bind(ctx, c, "Size = " + Vec2Arg(c->w, c->h));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "SelectionChanged") << "();\n";
         ctx.decls << "    IGOD::" << t << " " << c->name << ";\n";
@@ -214,6 +225,8 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
                                        (float)atof(NumOf(c, "G", "255").c_str()) / 255.0f,
                                        (float)atof(NumOf(c, "B", "255").c_str()) / 255.0f,
                                        (float)atof(NumOf(c, "A", "255").c_str()) / 255.0f));
+        Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));   // WYSIWYG genişlik
+        Bind(ctx, c, std::string("NoInputs = ") + (c->GetB("AlphaPreview") ? "false" : "true"));   // canvas kipiyle aynı
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "ColorChanged") << "();\n";
         ctx.decls << "    IGOD::ColorEdit4 " << c->name << ";\n";
@@ -349,6 +362,7 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
             heads += UPlain(WideStrToUtf8(s));
         }
         Bind(ctx, c, "Headers = { " + heads + " }");
+        Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));   // WYSIWYG genişlik
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Draw();\n";
         ctx.decls << "    IGOD::Table " << c->name << ";\n";
@@ -560,27 +574,42 @@ struct RadioButton {
 };
 struct SliderFloat {
     std::string Text = "Değer";  float Value = 0, Min = 0, Max = 100;
-    std::string Format = "%.1f";
+    std::string Format = "%.1f";  float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
     SliderFloat() {}
     SliderFloat(const std::string& t, float v, float mn, float mx) : Text(t), Value(v), Min(mn), Max(mx) {}
-    bool Draw() { return ImGui::SliderFloat(Text.c_str(), &Value, Min, Max, Format.c_str()); }
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::SliderFloat(Text.c_str(), &Value, Min, Max, Format.c_str());
+    }
 };
 struct SliderInt {
     std::string Text = "Değer";  int Value = 0, Min = 0, Max = 100;
-    std::string Format = "%d";
-    bool Draw() { return ImGui::SliderInt(Text.c_str(), &Value, Min, Max, Format.c_str()); }
+    std::string Format = "%d";  float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::SliderInt(Text.c_str(), &Value, Min, Max, Format.c_str());
+    }
 };
 struct DragFloat {
     std::string Text = "Değer";  float Value = 0, Min = 0, Max = 100, Speed = 1;
-    bool Draw() { return ImGui::DragFloat(Text.c_str(), &Value, Speed, Min, Max); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::DragFloat(Text.c_str(), &Value, Speed, Min, Max);
+    }
 };
 struct DragInt {
     std::string Text = "Değer";  int Value = 0, Min = 0, Max = 100; float Speed = 1;
-    bool Draw() { return ImGui::DragInt(Text.c_str(), &Value, Speed, Min, Max); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::DragInt(Text.c_str(), &Value, Speed, Min, Max);
+    }
 };
 struct InputText {
     std::string Text = "Yazı";   std::string Value;  std::string Hint;
     bool Password = false;  bool ReadOnly = false;
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
     char Buf[512] = {};  bool InitBuf = false;  bool EnterPressed = false;
     InputText() {}
     bool Draw() {
@@ -588,6 +617,7 @@ struct InputText {
         ImGuiInputTextFlags fl = 0;
         if (Password) fl |= ImGuiInputTextFlags_Password;
         if (ReadOnly) fl |= ImGuiInputTextFlags_ReadOnly;
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
         bool ch = ImGui::InputText(Text.c_str(), Buf, sizeof Buf, fl);
         if (!Hint.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Hint.c_str());
         EnterPressed = ImGui::IsItemEdited() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsItemDeactivated());
@@ -608,18 +638,28 @@ struct InputTextMultiline {
 };
 struct InputInt {
     std::string Text = "Sayı";  int Value = 0, Step = 1;
-    bool Draw() { return ImGui::InputInt(Text.c_str(), &Value, Step); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::InputInt(Text.c_str(), &Value, Step);
+    }
 };
 struct InputFloat {
     std::string Text = "Sayı";  float Value = 0; float Step = 1;
-    bool Draw() { return ImGui::InputFloat(Text.c_str(), &Value, Step); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    bool Draw() {
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
+        return ImGui::InputFloat(Text.c_str(), &Value, Step);
+    }
 };
 struct Combo {
     std::string Text = "Seçim";  std::vector<std::string> Items;  int Selected = 0;
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG — SetNextItemWidth)
     Combo() {}
     Combo(const std::vector<std::string>& it) : Items(it) {}
     bool Draw() {
         const char* cur = (Selected >= 0 && Selected < (int)Items.size()) ? Items[Selected].c_str() : "";
+        if (Width > 0) ImGui::SetNextItemWidth(Width);
         if (ImGui::BeginCombo(Text.c_str(), cur)) {
             for (int i = 0; i < (int)Items.size(); i++) {
                 bool sel = (i == Selected);
@@ -633,9 +673,12 @@ struct Combo {
 };
 struct ListBox {
     std::string Text = "Liste";  std::vector<std::string> Items;  int Selected = 0;  int HeightItems = 5;
+    ImVec2 Size = ImVec2(0, 0);   // tasarım boyutu — y<=0: HeightItems'ten otomatik (WYSIWYG)
     bool Draw() {
-        float h = ImGui::GetTextLineHeightWithSpacing() * (HeightItems + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
-        if (ImGui::BeginListBox(Text.c_str(), ImVec2(0.0f, h))) {
+        ImVec2 sz = Size;
+        if (sz.y <= 0.0f)
+            sz.y = ImGui::GetTextLineHeightWithSpacing() * (HeightItems + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
+        if (ImGui::BeginListBox(Text.c_str(), sz)) {
             for (int i = 0; i < (int)Items.size(); i++) {
                 if (ImGui::Selectable(Items[i].c_str(), i == Selected)) Selected = i;
             }
@@ -646,7 +689,12 @@ struct ListBox {
 };
 struct ColorEdit4 {
     std::string Text = "Renk";  ImVec4 Col = ImVec4(1, 1, 1, 1);
-    bool Draw() { return ImGui::ColorEdit4(Text.c_str(), &Col.x); }
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG — girişli kip)
+    bool NoInputs = true;   // true: yalnız renk karesi (canvas ile aynı kip)
+    bool Draw() {
+        if (Width > 0 && !NoInputs) ImGui::SetNextItemWidth(Width);
+        return ImGui::ColorEdit4(Text.c_str(), &Col.x, NoInputs ? ImGuiColorEditFlags_NoInputs : 0);
+    }
 };
 struct ProgressBar {
     float Value = 0.5f;  std::string Overlay;  ImVec2 Size = ImVec2(200, 18);
@@ -754,8 +802,10 @@ struct ModalPopup {
 struct Table {
     std::string Text = "Tablo";  int Columns = 3, Rows = 3;
     std::vector<std::string> Headers;
+    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG — outer_size.x)
     void Draw() {
-        if (ImGui::BeginTable((Text + "_tbl").c_str(), Columns, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImVec2 outer(Width > 0 ? Width : 0.0f, 0.0f);
+        if (ImGui::BeginTable((Text + "_tbl").c_str(), Columns, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg, outer)) {
             for (auto& h : Headers) ImGui::TableSetupColumn(h.c_str());
             ImGui::TableHeadersRow();
             for (int r = 0; r < Rows; r++) {

@@ -229,12 +229,59 @@ void DrawPropsPanel(ImVec2 min, ImVec2 max) {
                         else { m.Primary()->x = atoi(pos.c_str()); }
                         g_modelDirty = true;
                     }
-                    snprintf(pv, sizeof pv, "%d, %d", m.Primary()->w, m.Primary()->h);
-                    std::string sz = pv;
-                    if (PropRow("Boyut", &sz, nullptr)) {
-                        int w, h;
-                        if (sscanf(sz.c_str(), "%d, %d", &w, &h) == 2) { m.Primary()->w = w; m.Primary()->h = h; }
-                        g_modelDirty = true;
+                    // BOYUT SATIRI — TİP YETENEĞİNE GÖRE (kullanıcı hatası: "görselde
+                    // küçülmüyordu ama özelliklerde Boyut değişiyordu" — hayalet
+                    // boyut kökten giderildi):FULL=düzenlenebilir w,h; W=yalnız
+                    // genişlik (yükseklik ImGui sabidi, "(otomatik)"); AUTO=içerikten.
+                    int cap = SizeCapOf(m.Primary());
+                    if (cap == SIZECAP_FULL) {
+                        snprintf(pv, sizeof pv, "%d, %d", m.Primary()->w, m.Primary()->h);
+                        std::string sz = pv;
+                        if (PropRow("Boyut", &sz, nullptr)) {
+                            int w, h;
+                            if (sscanf(sz.c_str(), "%d, %d", &w, &h) == 2) {
+                                m.Primary()->w = (w > 12 ? w : 12); m.Primary()->h = (h > 8 ? h : 8);
+                                // özellik paneli ↔ Width/Height/SizeArg senkronu (tek gerçek)
+                                auto sw = m.Primary()->props.find("Width");   if (sw != m.Primary()->props.end()) sw->second = std::to_string(m.Primary()->w);
+                                auto sh = m.Primary()->props.find("Height"); if (sh != m.Primary()->props.end()) sh->second = std::to_string(m.Primary()->h);
+                                auto szw = m.Primary()->props.find("SizeArgW"); if (szw != m.Primary()->props.end()) szw->second = std::to_string(m.Primary()->w);
+                                auto szh = m.Primary()->props.find("SizeArgH"); if (szh != m.Primary()->props.end()) szh->second = std::to_string(m.Primary()->h);
+                            }
+                            g_modelDirty = true;
+                        }
+                    } else if (cap == SIZECAP_W) {
+                        // yalnız GENİŞLİK ayarlanabilir — SetNextItemWidth uygulanır
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted("Geni\305\237lik");
+                        ImGui::TableNextColumn();
+                        int wv = m.Primary()->w;
+                        ImGui::PushID("wonly");
+                        if (ImGui::InputInt("##v", &wv, 0)) {
+                            if (wv < 24) wv = 24;
+                            m.Primary()->w = wv;
+                            auto sw = m.Primary()->props.find("Width");
+                            if (sw != m.Primary()->props.end()) sw->second = std::to_string(wv);
+                            g_modelDirty = true;
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bu denetimin geni\305\237li\304\237i \303\247izimde ve \303\303\274retilen kodda aynen uygulan\304\261r");
+                        ImGui::PopID();
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted("Y\303\274kseklik");
+                        ImGui::TableNextColumn();
+                        ImGui::TextDisabled("(otomatik)");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Bu denetimin y\303\274ksekli\304\237i ImGui taraf\304\261ndan sabitlenir \342\200\224 geni\305\237lik ayarlanabilir");
+                    } else {
+                        // içerik boyutlu — deği\305\237tirilemez, gerçek boyut gösterilir
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted("Boyut");
+                        ImGui::TableNextColumn();
+                        ImGui::TextDisabled("(otomatik \342\200\224 i\303\247erikten \303\266l\303\247\303\274l\303\274r)");
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Bu denetimin boyutu metninden/i\303\247eri\304\237inden gelir \342\200\224 ImGui evreninde de\304\237i\305\237tirilemez");
                     }
                 }
                 if (_t0) EndPropTable();
@@ -268,6 +315,16 @@ void DrawPropsPanel(ImVec2 min, ImVec2 max) {
                                 if (p->name == "Height" || p->name == "SizeArgH") {
                                     int v = atoi(val->c_str());
                                     if (v > 0) m.Primary()->h = v;
+                                }
+                                // ListBox: satır sayısı ↔ tasarım yüksekliği (iki yön
+                                // tutarlı — görsel ile sayı daima aynı)
+                                if (p->name == "HeightItems") {
+                                    int items = atoi(val->c_str());
+                                    if (items >= 1) {
+                                        float hh = ImGui::GetTextLineHeightWithSpacing() * (items + 0.25f)
+                                                   + ImGui::GetStyle().FramePadding.y * 2.0f;
+                                        m.Primary()->h = (int)(hh + 0.5f);
+                                    }
                                 }
                                 g_modelDirty = true;
                             }

@@ -558,6 +558,13 @@ static void SelftestStep() {
                     // WYSIWYG senkronu: boyut prop'ları tasarım boyutunu da günceller
                     if (p == "Width" || p == "SizeArgW") { int v = atoi(rest.c_str()); if (v > 0) c->w = v; }
                     if (p == "Height" || p == "SizeArgH") { int v = atoi(rest.c_str()); if (v > 0) c->h = v; }
+                    // ListBox satır sayısı ↔ tasarım yüksekliği (görselle tutarlı)
+                    if (p == "HeightItems") {
+                        int items = atoi(rest.c_str());
+                        if (items >= 1)
+                            c->h = (int)(ImGui::GetTextLineHeightWithSpacing() * (items + 0.25f)
+                                         + ImGui::GetStyle().FramePadding.y * 2.0f + 0.5f);
+                    }
                 }
             }
         } else if (cmd == "form") { iss >> g_model.formW >> g_model.formH; g_model.formProps["ClientSize"] = std::to_string(g_model.formW) + ", " + std::to_string(g_model.formH); }
@@ -700,6 +707,40 @@ static void SelftestStep() {
             std::string p; std::getline(iss, p);
             p = TrimA(p);
             if (!p.empty()) WriteFileTextA(p, s_status + "\n");
+        }
+        else if (cmd == "dragobj") {
+            // dragobj <isim> <dx> <dy> — nesnenin SAĞ kenar tutamacından sürükleme
+            // (yalnız-genişlik tiplerde sağ/sol tutamaç vardır — maskeli boyutlandırma testi)
+            std::string n; int dx, dy; iss >> n >> dx >> dy;
+            HWND hwnd = (HWND)g_mainHwnd;
+            float rx, ry, rw, rh;
+            if (hwnd && canvas::ObjRectOf(n, &rx, &ry, &rw, &rh)) {
+                int x1 = (int)(rx + rw), y1 = (int)(ry + rh * 0.5f);   // sağ kenar ortası (tutamaç 3)
+                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(x1, y1));
+                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x1, y1));
+                Inject(1, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + dx / 2, y1 + dy / 2));
+                Inject(3, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + dx, y1 + dy));
+                Inject(4, WM_LBUTTONUP, 0, MAKELPARAM(x1 + dx, y1 + dy));
+                s_status = "dragobj " + n;
+            }
+        }
+        else if (cmd == "objsize") {
+            // objsize <isim> [dosya] — nesnenin GERÇEK ÇİZİM boyutunu (WxH) yazar.
+            // Test kancası: özellikteki Boyut ile görsel boyut aynı mı? (WYSIWYG)
+            std::string n, p; iss >> n;
+            std::getline(iss, p); p = TrimA(p);
+            float rx, ry, rw, rh;
+            if (canvas::ObjRectOf(n, &rx, &ry, &rw, &rh)) {
+                char buf[128];
+                snprintf(buf, sizeof buf, "%s:%dx%d\n", n.c_str(), (int)(rw + 0.5f), (int)(rh + 0.5f));
+                s_status = buf;
+                if (!p.empty()) {
+                    FILE* f = fopen(p.c_str(), "a");
+                    if (f) { fputs(buf, f); fclose(f); }
+                }
+            } else {
+                s_status = "objsize: bulunamadi " + n;
+            }
         }
         else if (cmd == "quit") { PostQuitMessage(0); s_selftestActive = false; return; }
     }

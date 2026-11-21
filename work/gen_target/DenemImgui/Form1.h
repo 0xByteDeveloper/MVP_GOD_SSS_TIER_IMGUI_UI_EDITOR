@@ -9,6 +9,7 @@ struct Form1 : IGOD::FormBase {
     IGOD::Checkbox checkbox1;   // tasarım: Seçeneğim
     IGOD::SliderFloat sliderFloat1;   // tasarım: Değer
     IGOD::Combo combo1;
+    IGOD::ListBox listBox1;
     IGOD::ProgressBar progressBar1;
     void panel1_Hovered();   // panel1: Fare üstüne gelince
     void button1_Click();   // button1: Tıklandığında
@@ -18,6 +19,7 @@ struct Form1 : IGOD::FormBase {
     void sliderFloat1_ValueChanged();   // sliderFloat1: Değer kayarken
     void sliderFloat1_Deactivated();   // sliderFloat1: Kaydırma bitince
     void combo1_SelectionChanged();   // combo1: Seçim değişince
+    void listBox1_SelectionChanged();   // listBox1: Seçim değişince
     void progressBar1_Hovered();   // progressBar1: Fare üstüne gelince
     void OnLoad() override;
     Form1();

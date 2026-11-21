@@ -103,6 +103,43 @@ check "panel1 Begin/End + çocuk button1 içeride" 'grep -q "panel1.Begin();" /h
 check "panel boyutu senkron (370x270)" 'grep -q "panel1.Size = ImVec2(370, 270);" /home/z/my-project/work/gen_target/DenemImgui/Form1.cpp'
 check "panel BgColor push (WYSIWYG stil)" 'grep -q "PushStyleColor(ImGuiCol_ChildBg" /home/z/my-project/work/gen_target/DenemImgui/Form1.cpp'
 
+echo "=== TEST 10: WIDGET BOYUTLANDIRMA (combo/listbox/slider GÖRSEL WYSIWYG) ==="
+run_editor ../tests/test_widgetsize.txt 18
+check "kayıt oluştu" '[ -s Bin/state_wsize.imgod ]'
+check "combo1 genişlik +120 GÖRSEL uygulandı (SetNextItemWidth — delta ölçüm)" 'python3 -c "
+import re;t=open(\"Bin/state_wsz.txt\").read()
+v=[int(x) for x in re.findall(r\"combo1:(\d+)x\",t)]
+exit(0 if len(v)>=2 and 117<=v[1]-v[0]<=123 else 1)"'
+check "listBox1 TAM boyut: genişlik +60 ve yükseklik 180 GÖRSEL (BeginListBox)" 'python3 -c "
+import re;t=open(\"Bin/state_wsz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"listBox1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=2 and 57<=v[1][0]-v[0][0]<=63 and 178<=v[1][1]<=182 else 1)"'
+check "sliderFloat1 genişlik +100 GÖRSEL (etiket çerçeve içinde)" 'python3 -c "
+import re;t=open(\"Bin/state_wsz.txt\").read()
+v=[int(x) for x in re.findall(r\"sliderFloat1:(\d+)x\",t)]
+exit(0 if len(v)>=2 and 97<=v[1]-v[0]<=103 else 1)"'
+check "inputText1 genişlik +50 GÖRSEL (delta ölçüm)" 'python3 -c "
+import re;t=open(\"Bin/state_wsz.txt\").read()
+v=[int(x) for x in re.findall(r\"inputText1:(\d+)x\",t)]
+exit(0 if len(v)>=2 and 47<=v[1]-v[0]<=53 else 1)"'
+check "checkbox1 genişlik İÇERİĞE döndü (otomatik — hayalet boyut yok)" 'python3 -c "
+import re;t=open(\"Bin/state_wsz.txt\").read()
+v=[int(x) for x in re.findall(r\"checkbox1:(\d+)x\",t)]
+exit(0 if len(v)>=2 and -2<=v[1]-v[0]<=2 else 1)"'
+check "table1 genişlik 360 GÖRSEL (outer_size — SON ölçüm)" 'python3 -c "
+import re;t=open(\"Bin/state_wsz.txt\").read()
+v=[int(x) for x in re.findall(r\"table1:(\d+)x\",t)]
+exit(0 if v and 357<=v[-1]<=363 else 1)"'
+check "SAĞ TUTAMAÇ sürüklemesi: combo1 +80 (maskeli boyutlandırma)" 'python3 -c "
+import re;t=open(\"Bin/state_wsz.txt\").read()
+v=[int(x) for x in re.findall(r\"combo1:(\d+)x\",t)]
+exit(0 if len(v)>=3 and 77<=v[2]-v[1]<=83 else 1)"'
+check "modelde kalıcı: combo1 W=400, listBox1 260x180" 'python3 -c "
+import json;d=json.load(open(\"Bin/state_wsize.imgod\"))
+cs=d[\"Forms\"][0][\"Ctrls\"]
+co=[c for c in cs if c[\"Type\"]==\"Combo\"][0]; li=[c for c in cs if c[\"Type\"]==\"ListBox\"][0]
+exit(0 if 396<=co[\"W\"]<=404 and 258<=li[\"W\"]<=262 and 178<=li[\"H\"]<=182 else 1)"'
+
 echo ""
 echo "=========================================="
 echo "SONUÇ: $PASS PASS / $FAIL FAIL"
