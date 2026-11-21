@@ -4,6 +4,8 @@
 //  canvas ve üretim aynı ImGui çağrı dizisini kullanır).
 // ============================================================================
 #include "codegen.h"
+#include <cstring>
+#include "objstyle.h"
 #include "forms.h"
 #include "theme.h"
 #include "imgod.h"
@@ -34,10 +36,12 @@ static std::string StrOf(const Ctrl* c, const char* k, const char* def) {
 static std::string FNum(double d) {
     char b[64]; snprintf(b, sizeof b, "%.6g", d);
     std::string s = b;
+    // C++ standardı: 40f GEÇERSİZ — kayan nokta sabiti '.' ya da üs İSTER.
+    // Bu yüzden daima ondalık nokta garanti et: 40 → 40.0f
     if (s.find('.') == std::string::npos && s.find('e') == std::string::npos &&
-        s.find("inf") == std::string::npos && s.find("nan") == std::string::npos) s += "f";
-    else if (s.find('e') != std::string::npos) { /* bilimsel — olduğu gibi */ }
-    else s += "f";
+        s.find("inf") == std::string::npos && s.find("nan") == std::string::npos)
+        s += ".0";
+    if (s.find("inf") == std::string::npos && s.find("nan") == std::string::npos) s += "f";
     return s;
 }
 static std::string FNumS(const std::string& v, double def) {
@@ -90,177 +94,301 @@ static void EmitEventCall(EmitCtx& ctx, const Ctrl* c, const std::string& cond, 
     ctx.body << "    if (" << cond << ") " << h << "();\n";
 }
 
+// tasarım özelliği → initlist bağlama satırı (WinForms InitializeComponent ruhu:
+// değerler FORM YAPICISINDA bir kez bağlanır, kullanıcı kodu runtime'da serbestçe değiştirir)
+static void Bind(EmitCtx& ctx, const Ctrl* c, const std::string& line) {
+    ctx.initlist << "    " << c->name << "." << line << ";\n";
+}
+// "Seçenek##checkbox1" biçimli benzersiz etiket (görünen metin + ID soneki)
+static std::string ULabel(const Ctrl* c, const char* textProp, const char* defText) {
+    return "u8\"" + EscCppUtf8(StrOf(c, textProp, defText)) + "##" + c->name + "\"";
+}
+static std::string UPlain(const std::string& s) {   // düz u8 sabiti
+    return "u8\"" + EscCppUtf8(s) + "\"";
+}
+static std::string FVec2(int w, int h) {
+    return "ImVec2(" + std::to_string(w) + ", " + std::to_string(h) + ")";
+}
+static std::string FVec4(float r, float g, float b, float a) {
+    return "ImVec4(" + FNum(r) + "f, " + FNum(g) + "f, " + FNum(b) + "f, " + FNum(a) + "f)";
+}
+
 static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
     const Model& m = *ctx.m;
     const std::string& t = c->type;
     const std::string pos = "ImVec2(" + std::to_string(c->x) + ", " + std::to_string(c->y) + ")";
-    // konteyner çocukları sırayla kendi koordinatlarıyla (parent-göreli → SetCursorPos parent client'ına)
+    // stil/renk geçersiz kılmaları — canvas ile AYNI push dizisi (WYSIWYG)
+    const std::string stPush = objstyle::EmitPush(c);
+    const std::string stPop  = objstyle::EmitPop(objstyle::CountPushes(c));
+    const bool disabled = c->GetB("Disabled");
+    if (!stPush.empty()) ctx.body << stPush;
+    if (disabled) ctx.body << "    ImGui::BeginDisabled();\n";
+
     if (t == "Button") {
         int w = (int)strtol(NumOf(c, "SizeArgW", "120").c_str(), nullptr, 10);
         int h = (int)strtol(NumOf(c, "SizeArgH", "28").c_str(), nullptr, 10);
         std::string size = (c->w > 0 || c->h > 0) ? Vec2Arg(c->w, c->h) : Vec2Arg(w, h);
+        if (c->GetB("Repeat")) ctx.body << "    ImGui::PushButtonRepeat(true);\n";
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
-        ctx.body << "    if (ImGui::Button(u8\"" << EscCppUtf8(StrOf(c, "Text", "Buton")) << "\", " << size << ")) " << HandlerOf(c->name, "Click") << "();\n";
+        if (c->GetB("Small"))
+            ctx.body << "    if (ImGui::SmallButton(" << ULabel(c, "Text", "Buton") << ")) " << HandlerOf(c->name, "Click") << "();\n";
+        else
+            ctx.body << "    if (ImGui::Button(" << ULabel(c, "Text", "Buton") << ", " << size << ")) " << HandlerOf(c->name, "Click") << "();\n";
+        if (c->GetB("Repeat")) ctx.body << "    ImGui::PopButtonRepeat();\n";
         auto it = c->events.find("Hovered");
         if (it != c->events.end() && !it->second.empty())
             ctx.body << "    if (ImGui::IsItemHovered()) " << it->second << "();\n";
         if (!StrOf(c, "Tooltip", "").empty())
-            ctx.body << "    if (ImGui::IsItemHovered()) ImGui::SetTooltip(u8\"" << EscCppUtf8(StrOf(c, "Tooltip", "")) << "\");\n";
-        ctx.decls << "    IGOD::Button " << c->name << ";   // tasarım: " << StrOf(c, "Text", "") << "\n";
-        ctx.handlers << "void " << "::" << HandlerOf(c->name, "Click") << "() {}\n";
-        return;
+            ctx.body << "    if (ImGui::IsItemHovered()) ImGui::SetTooltip(" << UPlain(StrOf(c, "Tooltip", "")) << ");\n";
+        ctx.decls << "    // " << c->name << " : Button — tasarım: " << StrOf(c, "Text", "") << "\n";
     }
-    if (t == "Checkbox") {
+    else if (t == "Checkbox") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Seçenek"));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Checked0 = " << (c->GetB("Checked") ? "true" : "false") << ";\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "Checked") << "();\n";
         ctx.decls << "    IGOD::Checkbox " << c->name << ";   // tasarım: " << StrOf(c, "Text", "") << "\n";
-        return;
     }
-    if (t == "RadioButton") {
+    else if (t == "RadioButton") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Seçim"));
+        Bind(ctx, c, std::string("Active = ") + (c->GetB("Active") ? "true" : "false"));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "Click") << "();\n";
         ctx.decls << "    IGOD::RadioButton " << c->name << ";\n";
-        return;
     }
-    if (t == "SliderFloat" || t == "SliderInt" || t == "DragFloat" || t == "DragInt" ||
-        t == "InputText" || t == "InputTextMultiline" || t == "InputInt" || t == "InputFloat") {
+    else if (t == "SliderFloat" || t == "SliderInt" || t == "DragFloat" || t == "DragInt" ||
+             t == "InputText" || t == "InputTextMultiline" || t == "InputInt" || t == "InputFloat") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "InputText" || t == "InputTextMultiline" ? "Yazı" : "Değer"));
+        if (t == "SliderFloat" || t == "DragFloat" || t == "InputFloat") {
+            Bind(ctx, c, "Value = " + FNum((float)atof(NumOf(c, "Value", "0").c_str())));
+            Bind(ctx, c, "Min = " + FNum((float)atof(NumOf(c, "Min", "0").c_str())));
+            Bind(ctx, c, "Max = " + FNum((float)atof(NumOf(c, "Max", "100").c_str())));
+        } else if (t == "SliderInt" || t == "DragInt" || t == "InputInt") {
+            Bind(ctx, c, "Value = " + std::to_string((int)strtol(NumOf(c, "Value", "0").c_str(), nullptr, 10)));
+            Bind(ctx, c, "Min = " + std::to_string((int)strtol(NumOf(c, "Min", "0").c_str(), nullptr, 10)));
+            Bind(ctx, c, "Max = " + std::to_string((int)strtol(NumOf(c, "Max", "100").c_str(), nullptr, 10)));
+        }
+        if (t == "SliderFloat" || t == "SliderInt") Bind(ctx, c, "Format = " + UPlain(StrOf(c, "Format", t == "SliderFloat" ? "%.1f" : "%d")));
+        if (t == "DragFloat" || t == "DragInt")    Bind(ctx, c, "Speed = " + FNum((float)atof(NumOf(c, "Speed", "1").c_str())));
+        if (t == "InputInt" || t == "InputFloat")   Bind(ctx, c, "Step = " + FNum((float)atof(NumOf(c, "Step", "1").c_str())));
+        if (t == "InputText") {
+            Bind(ctx, c, "Value = " + UPlain(StrOf(c, "Value", "")));
+            Bind(ctx, c, "Hint = " + UPlain(StrOf(c, "Hint", "")));
+            Bind(ctx, c, std::string("Password = ") + (c->GetB("Password") ? "true" : "false"));
+            Bind(ctx, c, std::string("ReadOnly = ") + (c->GetB("ReadOnly") ? "true" : "false"));
+        }
+        if (t == "InputTextMultiline") {
+            Bind(ctx, c, "Value = " + UPlain(StrOf(c, "Value", "")));
+            Bind(ctx, c, "ReadOnly = " + std::string(c->GetB("ReadOnly") ? "true" : "false"));
+            Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "280").c_str(), nullptr, 10),
+                                            c->h ? c->h : (int)strtol(NumOf(c, "Height", "120").c_str(), nullptr, 10)));
+        }
+        std::string defEv = (t == "InputText" || t == "InputTextMultiline") ? "TextChanged" : "ValueChanged";
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
-        ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "ValueChanged") << "();\n";
+        ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, defEv) << "();\n";
         ctx.decls << "    IGOD::" << t << " " << c->name << ";   // tasarım: " << StrOf(c, "Text", "") << "\n";
         if (t == "InputText") {
             auto it = c->events.find("EnterPressed");
             if (it != c->events.end() && !it->second.empty())
                 ctx.body << "    if (" << c->name << ".EnterPressed) " << it->second << "();\n";
         }
-        return;
     }
-    if (t == "Combo" || t == "ListBox") {
+    else if (t == "Combo" || t == "ListBox") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "Combo" ? "Seçim" : "Liste"));
+        std::string items;
+        for (auto& s : SplitW(Utf8ToWideStr(StrOf(c, "Items", "")), L'|')) {
+            if (!items.empty()) items += ", ";
+            items += UPlain(WideStrToUtf8(s));
+        }
+        Bind(ctx, c, "Items = { " + items + " }");
+        Bind(ctx, c, "Selected = " + std::to_string((int)strtol(NumOf(c, "Selected", "0").c_str(), nullptr, 10)));
+        if (t == "ListBox")
+            Bind(ctx, c, "HeightItems = " + std::to_string((int)strtol(NumOf(c, "HeightItems", "5").c_str(), nullptr, 10)));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "SelectionChanged") << "();\n";
         ctx.decls << "    IGOD::" << t << " " << c->name << ";\n";
-        return;
     }
-    if (t == "ColorEdit4") {
+    else if (t == "ColorEdit4") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Renk"));
+        Bind(ctx, c, "Col = " + FVec4((float)atof(NumOf(c, "R", "255").c_str()) / 255.0f,
+                                       (float)atof(NumOf(c, "G", "255").c_str()) / 255.0f,
+                                       (float)atof(NumOf(c, "B", "255").c_str()) / 255.0f,
+                                       (float)atof(NumOf(c, "A", "255").c_str()) / 255.0f));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "ColorChanged") << "();\n";
         ctx.decls << "    IGOD::ColorEdit4 " << c->name << ";\n";
-        return;
     }
-    if (t == "ProgressBar") {
+    else if (t == "ProgressBar") {
+        Bind(ctx, c, "Value = " + FNum((float)atof(NumOf(c, "Value", "0.5").c_str())));
+        Bind(ctx, c, "Overlay = " + UPlain(StrOf(c, "Overlay", "")));
+        Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "200").c_str(), nullptr, 10),
+                                        c->h ? c->h : (int)strtol(NumOf(c, "Height", "18").c_str(), nullptr, 10)));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Draw();\n";
         ctx.decls << "    IGOD::ProgressBar " << c->name << ";\n";
-        return;
     }
-    if (t == "Separator") {
+    else if (t == "Separator") {
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    ImGui::Separator();\n";
-        return;
     }
-    if (t == "SeparatorText") {
+    else if (t == "SeparatorText") {
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
-        ctx.body << "    ImGui::SeparatorText(u8\"" << EscCppUtf8(StrOf(c, "Text", "Bölüm")) << "\");\n";
-        return;
+        ctx.body << "    ImGui::SeparatorText(" << ULabel(c, "Text", "Bölüm") << ");\n";
     }
-    if (t == "Text" || t == "TextColored" || t == "BulletText" || t == "LabelText") {
-        ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
+    else if (t == "Text" || t == "TextColored" || t == "BulletText" || t == "LabelText") {
+        // kimliksiz çıktılar — ## soneki GÖRÜNÜR, bu yüzden düz metin (çakışma yok)
         std::string s = EscCppUtf8(StrOf(c, "Text", "Etiket"));
-        if (t == "Text") ctx.body << "    ImGui::Text(u8\"" << s << "\");\n";
+        ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
+        if (t == "Text") {
+            if (c->GetB("Wrapped")) ctx.body << "    ImGui::TextWrapped(" << UPlain(StrOf(c, "Text", "Etiket")) << ");\n";
+            else ctx.body << "    ImGui::Text(" << UPlain(StrOf(c, "Text", "Etiket")) << ");\n";
+        }
         else if (t == "TextColored") {
             int r = (int)strtol(NumOf(c, "R", "255").c_str(), nullptr, 10);
             int g = (int)strtol(NumOf(c, "G", "200").c_str(), nullptr, 10);
             int b = (int)strtol(NumOf(c, "B", "80").c_str(), nullptr, 10);
-            ctx.body << "    ImGui::TextColored(ImVec4(" << FNum(r/255.0) << ", " << FNum(g/255.0) << ", " << FNum(b/255.0) << ", 1.0f), u8\"" << s << "\");\n";
+            ctx.body << "    ImGui::TextColored(" << FVec4(r/255.0f, g/255.0f, b/255.0f, 1.0f) << ", " << UPlain(StrOf(c, "Text", "Renkli etiket")) << ");\n";
         }
-        else if (t == "BulletText") ctx.body << "    ImGui::BulletText(u8\"" << s << "\");\n";
-        else ctx.body << "    ImGui::LabelText(u8\"" << s << "\", u8\"" << EscCppUtf8(StrOf(c, "Value", "değer")) << "\");\n";
-        return;
+        else if (t == "BulletText") ctx.body << "    ImGui::BulletText(" << UPlain(StrOf(c, "Text", "Madde")) << ");\n";
+        else ctx.body << "    ImGui::LabelText(" << ULabel(c, "Text", "Alan") << ", " << UPlain(StrOf(c, "Value", "değer")) << ");\n";
     }
-    if (t == "PlotLines" || t == "PlotHistogram") {
+    else if (t == "PlotLines" || t == "PlotHistogram") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "PlotLines" ? "Grafik" : "Histogram"));
+        std::string data;
+        for (auto& s : SplitW(Utf8ToWideStr(StrOf(c, "Items", "")), L'|')) {
+            if (!data.empty()) data += ", ";
+            data += FNum((float)wcstod(s.c_str(), nullptr));
+        }
+        if (data.empty()) data = "0.0f";
+        Bind(ctx, c, "Data = { " + data + " }");
+        if (t == "PlotLines") {
+            Bind(ctx, c, "ScaleMin = " + FNum((float)atof(NumOf(c, "ScaleMin", "0").c_str())));
+            Bind(ctx, c, "ScaleMax = " + FNum((float)atof(NumOf(c, "ScaleMax", "1").c_str())));
+        }
+        Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "280").c_str(), nullptr, 10),
+                                        c->h ? c->h : (int)strtol(NumOf(c, "Height", "120").c_str(), nullptr, 10)));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Draw();\n";
         ctx.decls << "    IGOD::" << t << " " << c->name << ";\n";
-        return;
     }
-    if (t == "ChildWindow") {
+    else if (t == "Panel") {
+        // PANEL — WinForms Panel: kenarlıklı child bölge (ImGui::BeginChild).
+        // Nesneler İÇİNE yerleştirilebilir; editör canvas'ı aynı çizimi kullanır.
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Panel"));   // ## sonekli benzersiz child kimliği
+        Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "300").c_str(), nullptr, 10),
+                                        c->h ? c->h : (int)strtol(NumOf(c, "Height", "200").c_str(), nullptr, 10)));
+        Bind(ctx, c, std::string("Border = ") + (c->GetB("Border") ? "true" : "false"));
+        Bind(ctx, c, "Rounding = " + FNumS(NumOf(c, "Rounding", "-1"), -1.0));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Begin();\n";
-        // çocuklar (parent-göreli koordinatlarıyla bu child içinde)
+        for (Ctrl* ch : m.ChildrenOf(const_cast<Ctrl*>(c))) EmitCtrl(ctx, ch);
+        ctx.body << "    " << c->name << ".End();\n";
+        ctx.decls << "    IGOD::Panel " << c->name << ";\n";
+    }
+    else if (t == "ChildWindow") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Child"));   // ## sonekli: child kimliği benzersiz
+        Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "300").c_str(), nullptr, 10),
+                                        c->h ? c->h : (int)strtol(NumOf(c, "Height", "200").c_str(), nullptr, 10)));
+        Bind(ctx, c, std::string("Border = ") + (c->GetB("Border") ? "true" : "false"));
+        ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
+        ctx.body << "    " << c->name << ".Begin();\n";
         for (Ctrl* ch : m.ChildrenOf(const_cast<Ctrl*>(c))) EmitCtrl(ctx, ch);
         ctx.body << "    " << c->name << ".End();\n";
         ctx.decls << "    IGOD::ChildWindow " << c->name << ";\n";
-        return;
     }
-    if (t == "GroupBox") {
+    else if (t == "GroupBox") {
+        Bind(ctx, c, "Text = " + UPlain(StrOf(c, "Text", "Grup")));   // görünür başlık
+        Bind(ctx, c, "Id = " + UPlain(c->name));                        // benzersiz child kimliği
+        Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "320").c_str(), nullptr, 10),
+                                        c->h ? c->h : (int)strtol(NumOf(c, "Height", "160").c_str(), nullptr, 10)));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Begin();\n";
         for (Ctrl* ch : m.ChildrenOf(const_cast<Ctrl*>(c))) EmitCtrl(ctx, ch);
         ctx.body << "    " << c->name << ".End();\n";
         ctx.decls << "    IGOD::GroupBox " << c->name << ";\n";
-        return;
     }
-    if (t == "CollapsingHeader" || t == "TreeNode") {
+    else if (t == "CollapsingHeader" || t == "TreeNode") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "CollapsingHeader" ? "Başlık" : "Düğüm"));
+        Bind(ctx, c, std::string("DefaultOpen = ") + (c->GetB("DefaultOpen") ? "true" : "false"));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Begin()) {\n";
         for (Ctrl* ch : m.ChildrenOf(const_cast<Ctrl*>(c))) EmitCtrl(ctx, ch);
         ctx.body << "        " << c->name << ".End();\n";
         ctx.body << "    }\n";
         ctx.decls << "    IGOD::" << t << " " << c->name << ";\n";
-        return;
     }
-    if (t == "TabBar") {
+    else if (t == "TabBar") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Sekmeler"));   // ## sonekli tabbar kimliği
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Begin();\n";
-        // sekme başlıkları Items'tan; her sekme altındaki çocukları TabItem içinde render et
         std::string items = StrOf(c, "Items", "Genel|Ayarlar");
-        int i = 0;
         for (auto& s : SplitW(Utf8ToWideStr(items), L'|')) {
             std::string title = WideStrToUtf8(s);
-            ctx.body << "    if (ImGui::BeginTabItem(u8\"" << EscCppUtf8(title) << "\")) {\n";
-            // sekmeye ait çocuklar: TabOwner prop'u sekme başlığı adını taşır (editör set eder)
+            ctx.body << "    if (ImGui::BeginTabItem(" << UPlain(title) << ")) {\n";
             for (Ctrl* ch : m.ChildrenOf(const_cast<Ctrl*>(c))) {
                 std::string owner = ch->Get("TabOwner", "");
                 if (owner == title) EmitCtrl(ctx, ch);
             }
             ctx.body << "        ImGui::EndTabItem();\n    }\n";
-            ++i;
         }
         ctx.body << "    " << c->name << ".End();\n";
         ctx.decls << "    IGOD::TabBar " << c->name << ";\n";
-        return;
     }
-    if (t == "Popup") {
-        // modal — popup aç/kapa IGOD ile: varsayılan kapalı; Open() çağrısı kullanıcıda
+    else if (t == "Popup") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Pencere"));    // modal başlığı + benzersiz kimlik
         ctx.body << "    " << c->name << ".Draw();\n";
         ctx.decls << "    IGOD::ModalPopup " << c->name << ";\n";
-        return;
     }
-    if (t == "Table") {
+    else if (t == "Table") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Tablo"));      // ## sonekli tablo kimliği
+        Bind(ctx, c, "Columns = " + std::to_string((int)strtol(NumOf(c, "Columns", "3").c_str(), nullptr, 10)));
+        Bind(ctx, c, "Rows = " + std::to_string((int)strtol(NumOf(c, "Rows", "3").c_str(), nullptr, 10)));
+        std::string heads;
+        for (auto& s : SplitW(Utf8ToWideStr(StrOf(c, "Items", "Sütun1|Sütun2|Sütun3")), L'|')) {
+            if (!heads.empty()) heads += ", ";
+            heads += UPlain(WideStrToUtf8(s));
+        }
+        Bind(ctx, c, "Headers = { " + heads + " }");
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Draw();\n";
         ctx.decls << "    IGOD::Table " << c->name << ";\n";
-        return;
     }
-    if (t == "Menu") {
+    else if (t == "Menu") {
+        std::string menus;
+        for (auto& s : SplitW(Utf8ToWideStr(StrOf(c, "Items", "Dosya|Düzen|Yardım")), L'|')) {
+            if (!menus.empty()) menus += ", ";
+            menus += UPlain(WideStrToUtf8(s));
+        }
+        std::string cmds;
+        for (auto& s : SplitW(Utf8ToWideStr(StrOf(c, "Commands", "")), L'|')) {
+            if (cmds.empty()) continue;
+            if (!cmds.empty()) cmds += ", ";
+            cmds += UPlain(WideStrToUtf8(s));
+        }
+        Bind(ctx, c, "Menus = { " + menus + " }");
+        Bind(ctx, c, "Commands = { " + cmds + " }");
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "MenuClick") << "();\n";
         ctx.decls << "    IGOD::MenuBarWrap " << c->name << ";\n";
-        return;
     }
-    if (t == "Timer") {
-        // görsel değil — yapıcıda kayıt
+    else if (t == "Timer") {
         ctx.decls << "    IGOD::Timer " << c->name << ";   // Interval=" << StrOf(c, "Interval", "1000") << "ms\n";
         ctx.initlist << "    " << c->name << ".Interval = " << INum(StrOf(c, "Interval", "1000"), 1000) << ";\n";
         ctx.initlist << "    " << c->name << ".Enabled = " << (c->GetB("Enabled") ? "true" : "false") << ";\n";
+        ctx.initlist << "    " << c->name << ".Tick = []{ " << HandlerOf(c->name, "Tick") << "(); };\n";
         ctx.initlist << "    Timers.push_back(&" << c->name << ");\n";
-        return;
     }
-    if (t == "FontRef") {
+    else if (t == "FontRef") {
+        Bind(ctx, c, "Name = " + UPlain(StrOf(c, "Text", "Arial")));
+        Bind(ctx, c, "Size = " + FNum((float)atof(NumOf(c, "Size", "18").c_str())));
+        Bind(ctx, c, std::string("Bold = ") + (c->GetB("Bold") ? "true" : "false"));
         ctx.decls << "    IGOD::FontRef " << c->name << ";\n";
-        return;
     }
-    // bilinmeyen tip — yorum olarak bırak
-    ctx.body << "    /* bilinmeyen nesne: " << t << " " << c->name << " */\n";
+    else {
+        ctx.body << "    /* bilinmeyen nesne: " << t << " " << c->name << " */\n";
+    }
+
+    if (disabled) ctx.body << "    ImGui::EndDisabled();\n";
+    if (!stPop.empty()) ctx.body << stPop;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,14 +405,36 @@ std::string EmitFormCpp(const std::string& formName, const Model& m) {
     o << "#include \"" << formName << ".h\"\n\n";
     o << "//== IMGOD:INIT-BEGIN (editör üretimi — elle değiştirmeyin)\n";
     o << "void " << formName << "::Render() {\n";
+    // ---- form stili (varsa) — canvas ile AYNI push dizisi (WYSIWYG) ----
+    int _nStyleCol = 0, _nStyleVar = 0;
+    {
+        float f[4];
+        if (objstyle::ParseHexColor(m.formProps.count("WindowBgColor") ? m.formProps.at("WindowBgColor") : "", f)) {
+            o << "    ImGui::PushStyleColor(ImGuiCol_WindowBg, " << FVec4(f[0], f[1], f[2], f[3]) << ");\n";
+            _nStyleCol++;
+        }
+        if (m.formProps.count("WindowRounding") && (float)atof(m.formProps.at("WindowRounding").c_str()) >= 0) {
+            o << "    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, " << FNum((float)atof(m.formProps.at("WindowRounding").c_str())) << "f);\n";
+            _nStyleVar++;
+        }
+        if (m.formProps.count("WindowBorderSize") && (float)atof(m.formProps.at("WindowBorderSize").c_str()) >= 0) {
+            o << "    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, " << FNum((float)atof(m.formProps.at("WindowBorderSize").c_str())) << "f);\n";
+            _nStyleVar++;
+        }
+    }
     o << "    ImGui::SetNextWindowSize(ImVec2(" << m.formW << ", " << m.formH << "), ImGuiCond_FirstUseEver);\n";
-    o << "    if (!ImGui::Begin(u8\"" << EscCppUtf8(title) << "\", nullptr, " << flags << ")) { ImGui::End(); return; }\n";
+    o << "    if (!ImGui::Begin(u8\"" << EscCppUtf8(title) << "\", nullptr, " << flags << ")) { ImGui::End();\n";
+    if (_nStyleVar > 0) o << "        ImGui::PopStyleVar(" << _nStyleVar << ");\n";
+    if (_nStyleCol > 0) o << "        ImGui::PopStyleColor(" << _nStyleCol << ");\n";
+    o << "        return; }\n";
     // üst-seviye nesneler (parent=null) — üstte kalan son
     std::vector<Ctrl*> tops;
     for (Ctrl* c : m.ctrls) if (!c->parent) tops.push_back(c);
     for (Ctrl* c : tops) EmitCtrl(ctx, c);
     o << ctx.body.str();
     o << "    ImGui::End();\n";
+    if (_nStyleVar > 0) o << "    ImGui::PopStyleVar(" << _nStyleVar << ");\n";
+    if (_nStyleCol > 0) o << "    ImGui::PopStyleColor(" << _nStyleCol << ");\n";
     o << "}\n";
     o << "//== IMGOD:INIT-END\n\n";
     // olay işleyicileri
@@ -313,6 +463,8 @@ std::string EmitFormCpp(const std::string& formName, const Model& m) {
     o << formName << "::" << formName << "() {\n";
     o << ctx.initlist.str();
     o << "}\n";
+    o << formName << "::~" << formName << "() {}\n";
+    o << "void " << formName << "::OnLoad() {\n    // TODO: form yüklendiğinde çalışacak kod\n}\n";
     return o.str();
 }
 
@@ -327,6 +479,7 @@ std::string EmitFormH(const std::string& formName, const Model& m) {
     // nesneler — decl string'ini topla (render emit etmeden sadece decls doldurmak için
     // ayrı bir ctx ile tarama)
     EmitCtx dctx;
+    dctx.m = &m;   // KRİTİK: model bağlanmadan konteyner çocuk taraması null modelle çökerdi
     for (Ctrl* c : m.ctrls) EmitCtrl(dctx, c);
     o << dctx.decls.str();
     // handler prototipleri
@@ -346,6 +499,7 @@ std::string EmitFormH(const std::string& formName, const Model& m) {
     }
     o << "    void OnLoad() override;\n";
     o << "    " << formName << "();\n";
+    o << "    ~" << formName << "() override;   // vtable bu TU'da bağlanır\n";
     o << "    void Render() override;\n";
     o << "};\n";
     return o.str();
@@ -362,6 +516,8 @@ std::string EmitGlobalH() {
 // ============================================================================
 #pragma once
 #include "imgui.h"
+#include <windows.h>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <functional>
@@ -424,24 +580,28 @@ struct DragInt {
 };
 struct InputText {
     std::string Text = "Yazı";   std::string Value;  std::string Hint;
+    bool Password = false;  bool ReadOnly = false;
     char Buf[512] = {};  bool InitBuf = false;  bool EnterPressed = false;
     InputText() {}
     bool Draw() {
         if (!InitBuf) { snprintf(Buf, sizeof Buf, "%s", Value.c_str()); InitBuf = true; }
         ImGuiInputTextFlags fl = 0;
-        if (!Hint.empty()) fl |= ImGuiInputTextFlagsPlaceholderText_UntilEdit;   // 1.91+: ipucu
-        bool ch = ImGui::InputText(Text.c_str(), Buf, sizeof Buf, fl, nullptr, (void*)Hint.c_str());
+        if (Password) fl |= ImGuiInputTextFlags_Password;
+        if (ReadOnly) fl |= ImGuiInputTextFlags_ReadOnly;
+        bool ch = ImGui::InputText(Text.c_str(), Buf, sizeof Buf, fl);
+        if (!Hint.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Hint.c_str());
         EnterPressed = ImGui::IsItemEdited() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsItemDeactivated());
         if (ch) Value = Buf;
         return ch;
     }
 };
 struct InputTextMultiline {
-    std::string Text = "Not";   std::string Value;  ImVec2 Size = ImVec2(280, 120);
+    std::string Text = "Not";   std::string Value;  bool ReadOnly = false;  ImVec2 Size = ImVec2(280, 120);
     char Buf[4096] = {};  bool InitBuf = false;
     bool Draw() {
         if (!InitBuf) { snprintf(Buf, sizeof Buf, "%s", Value.c_str()); InitBuf = true; }
-        bool ch = ImGui::InputTextMultiline(Text.c_str(), Buf, sizeof Buf, Size);
+        ImGuiInputTextFlags _fl = ReadOnly ? ImGuiInputTextFlags_ReadOnly : 0;
+        bool ch = ImGui::InputTextMultiline(Text.c_str(), Buf, sizeof Buf, Size, _fl);
         if (ch) Value = Buf;
         return ch;
     }
@@ -474,11 +634,12 @@ struct Combo {
 struct ListBox {
     std::string Text = "Liste";  std::vector<std::string> Items;  int Selected = 0;  int HeightItems = 5;
     bool Draw() {
-        if (ImGui::ListBoxHeader(Text.c_str(), HeightItems)) {
+        float h = ImGui::GetTextLineHeightWithSpacing() * (HeightItems + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
+        if (ImGui::BeginListBox(Text.c_str(), ImVec2(0.0f, h))) {
             for (int i = 0; i < (int)Items.size(); i++) {
                 if (ImGui::Selectable(Items[i].c_str(), i == Selected)) Selected = i;
             }
-            ImGui::ListBoxFooter();
+            ImGui::EndListBox();
         }
         return false;
     }
@@ -497,13 +658,13 @@ struct ProgressBar {
 };
 struct PlotLines {
     std::string Text = "Grafik";  std::vector<float> Data;  float ScaleMin = 0, ScaleMax = 1; ImVec2 Size = ImVec2(280, 120);
-    bool Draw() {
-        return ImGui::PlotLines(Text.c_str(), Data.data(), (int)Data.size(), 0, nullptr, ScaleMin, ScaleMax, Size);
+    void Draw() {
+        ImGui::PlotLines(Text.c_str(), Data.data(), (int)Data.size(), 0, nullptr, ScaleMin, ScaleMax, Size);
     }
 };
 struct PlotHistogram {
     std::string Text = "Histogram";  std::vector<float> Data;  ImVec2 Size = ImVec2(280, 120);
-    bool Draw() { return ImGui::PlotHistogram(Text.c_str(), Data.data(), (int)Data.size(), 0, nullptr, FLT_MAX, FLT_MAX, Size); }
+    void Draw() { ImGui::PlotHistogram(Text.c_str(), Data.data(), (int)Data.size(), 0, nullptr, FLT_MAX, FLT_MAX, Size); }
 };
 // konteynerler
 struct ChildWindow {
@@ -515,11 +676,12 @@ struct ChildWindow {
     void End() { ImGui::EndChild(); }
 };
 struct GroupBox {
-    std::string Text = "Grup";  ImVec2 Size = ImVec2(320, 160);
+    std::string Text = "Grup";  std::string Id;  ImVec2 Size = ImVec2(320, 160);
     bool Begin() {
         // WinForms GroupBox görünümü: çerçeveli child + üst kenarda başlık
+        // Id boşsa Text+"_grp" — editör üretimi benzersiz Id bağlar
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
-        ImGui::BeginChild((Text + "_grp").c_str(), Size, ImGuiChildFlags_Borders);
+        ImGui::BeginChild(Id.empty() ? (Text + "_grp").c_str() : (Id + "_grp").c_str(), Size, ImGuiChildFlags_Borders);
         return true;
     }
     void End() {
@@ -534,6 +696,21 @@ struct GroupBox {
         ImVec2 lp = ImVec2(rmin.x + 8, rmin.y - ts.y * 0.5f);
         dl->AddRectFilled(ImVec2(lp.x - 4, lp.y - 1), ImVec2(lp.x + ts.x + 4, lp.y + ts.y + 1), ImGui::GetColorU32(ImGuiCol_WindowBg));
         dl->AddText(lp, ImGui::GetColorU32(ImGuiCol_Text), Text.c_str());
+    }
+};
+struct Panel {
+    // WinForms Panel karşılığı: kenarlıklı child bölge (bağımsız kaydırılabilir
+    // yüzey). Text yalnızca benzersiz child kimliği için ("Görünür##panel1").
+    std::string Text = "Panel";  ImVec2 Size = ImVec2(300, 200);
+    bool Border = true;  float Rounding = -1.0f;
+    bool Begin() {
+        if (Rounding >= 0.0f) ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, Rounding);
+        ImGuiChildFlags cf = Border ? ImGuiChildFlags_Borders : 0;
+        return ImGui::BeginChild(Text.c_str(), Size, cf);
+    }
+    void End() {
+        ImGui::EndChild();
+        if (Rounding >= 0.0f) ImGui::PopStyleVar();
     }
 };
 struct CollapsingHeader {
@@ -562,10 +739,10 @@ struct ModalPopup {
     void Open() { OpenReq = true; }
     void Close() { OpenReq = false; ImGui::CloseCurrentPopup(); }
     bool Begin() {
-        if (OpenReq && !ImGui::IsPopupOpen((Text + "_pp").c_str()))
-            ImGui::OpenPopup((Text + "_pp").c_str());
+        if (OpenReq && !ImGui::IsPopupOpen(Text.c_str()))
+            ImGui::OpenPopup(Text.c_str());
         OpenReq = false;
-        return ImGui::BeginPopupModal((Text + "_pp").c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        return ImGui::BeginPopupModal(Text.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     }
     void End() { ImGui::EndPopup(); }
     void Draw() {
@@ -605,7 +782,7 @@ struct MenuBarWrap {
                         size_t c = cmd.find(':');
                         if (c == std::string::npos) continue;
                         std::string owner = cmd.substr(0, c);
-                        std::string item = TrimA(cmd.substr(c + 1));
+                        std::string item = TrimA2(cmd.substr(c + 1));
                         if (owner != m) continue;
                         if (ImGui::MenuItem(item.c_str())) { LastCommand = m + ":" + item; clicked = true; }
                     }
@@ -676,6 +853,35 @@ struct App {
 };
 extern App* g_app;
 
+// —— fontlar: fonts/DejaVuSans.ttf (exe yanı/üstleri) — Türkçe destek ------
+inline std::string ProbeFontA(const char* rel) {
+    char exeDir[MAX_PATH];
+    GetModuleFileNameA(nullptr, exeDir, MAX_PATH);
+    char* slash = strrchr(exeDir, '\\');
+    if (slash) *slash = 0;
+    const char* affixes[] = { "", "\\..", "\\..\\..", "\\..\\..\\.." };
+    for (auto& a : affixes) {
+        std::string p = std::string(exeDir) + a + "\\" + rel;
+        if (GetFileAttributesA(p.c_str()) != INVALID_FILE_ATTRIBUTES) return p;
+    }
+    char cwd[MAX_PATH];
+    if (GetCurrentDirectoryA(MAX_PATH, cwd)) {
+        std::string p = std::string(cwd) + "\\" + rel;
+        if (GetFileAttributesA(p.c_str()) != INVALID_FILE_ATTRIBUTES) return p;
+    }
+    return "";
+}
+inline void SetupFonts() {
+    ImGuiIO& io = ImGui::GetIO();
+    static const ImWchar ranges[] = { 0x0020, 0x01FF, 0x2010, 0x205F, 0x2190, 0x21FF, 0 };  // Latin-1 + Ext-A + oklar
+    std::string sans = ProbeFontA("fonts\\DejaVuSans.ttf");
+    if (!sans.empty()) io.Fonts->AddFontFromFileTTF(sans.c_str(), 17.0f, nullptr, ranges);
+    else io.Fonts->AddFontDefault();
+    std::string mono = ProbeFontA("fonts\\DejaVuSansMono.ttf");
+    if (!mono.empty()) io.FontDefault = io.Fonts->AddFontFromFileTTF(mono.c_str(), 15.0f, nullptr, ranges);
+    io.Fonts->Build();
+}
+
 // —— tema paletleri (üretilen kod ile aynı isimler) ---------------------------
 void ApplyGodOpsTheme();
 void ApplyMidnightSteelTheme();
@@ -692,6 +898,8 @@ static const char* kBackendMain[] = {
 R"MAINDX11(// main.cpp — IMGUI_GOD_SSSTIER üretimi (DirectX 11)
 #include "Global.h"
 #include "Form1.h"
+#include "imgui/backends/imgui_impl_win32.h"
+#include "imgui/backends/imgui_impl_dx11.h"
 #include <d3d11.h>
 #include <tchar.h>
 #pragma comment(lib, "d3d11.lib")
@@ -750,10 +958,11 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
+IGOD::App* IGOD::g_app = nullptr;   // Global.h extern tanımı (file scope)
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, hInst, nullptr, nullptr, nullptr, nullptr, L"IMGodApp", nullptr };
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, u8"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, L"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
         100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
     if (!CreateDevice(hwnd)) { MessageBoxW(hwnd, L"D3D11 cihazı oluşturulamadı.", L"Hata", MB_OK | MB_ICONERROR); return 1; }
     ShowWindow(hwnd, SW_SHOWDEFAULT);
@@ -761,6 +970,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    IGOD::SetupFonts();   // fonts/DejaVu*.ttf — Türkçe karakter desteği
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     __THEMECALL__
@@ -812,6 +1022,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 R"MAINDX9(// main.cpp — IMGUI_GOD_SSSTIER üretimi (DirectX 9)
 #include "Global.h"
 #include "Form1.h"
+#include "imgui/backends/imgui_impl_win32.h"
+#include "imgui/backends/imgui_impl_dx9.h"
 #include <d3d9.h>
 #pragma comment(lib, "d3d9.lib")
 
@@ -852,10 +1064,11 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
+IGOD::App* IGOD::g_app = nullptr;   // Global.h extern tanımı (file scope)
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, hInst, nullptr, nullptr, nullptr, nullptr, L"IMGodApp", nullptr };
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, u8"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, L"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
         100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
     if (!CreateDeviceD3D(hwnd)) { MessageBoxW(hwnd, L"D3D9 cihazı oluşturulamadı.", L"Hata", MB_OK | MB_ICONERROR); return 1; }
     ShowWindow(hwnd, SW_SHOWDEFAULT);
@@ -863,6 +1076,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    IGOD::SetupFonts();   // fonts/DejaVu*.ttf — Türkçe karakter desteği
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     __THEMECALL__
@@ -904,6 +1118,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 R"MAINDX10(// main.cpp — IMGUI_GOD_SSSTIER üretimi (DirectX 10)
 #include "Global.h"
 #include "Form1.h"
+#include "imgui/backends/imgui_impl_win32.h"
+#include "imgui/backends/imgui_impl_dx10.h"
 #include <d3d10_1.h>
 #include <d3d10.h>
 #include <dxgi.h>
@@ -954,10 +1170,11 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
+IGOD::App* IGOD::g_app = nullptr;   // Global.h extern tanımı (file scope)
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, hInst, nullptr, nullptr, nullptr, nullptr, L"IMGodApp", nullptr };
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, u8"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, L"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
         100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
     if (!CreateDeviceD3D(hwnd)) { MessageBoxW(hwnd, L"D3D10 cihazı oluşturulamadı.", L"Hata", MB_OK | MB_ICONERROR); return 1; }
     ShowWindow(hwnd, SW_SHOWDEFAULT);
@@ -965,6 +1182,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    IGOD::SetupFonts();   // fonts/DejaVu*.ttf — Türkçe karakter desteği
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     __THEMECALL__
@@ -1019,7 +1237,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 R"MAINGL3(// main.cpp — IMGUI_GOD_SSSTIER üretimi (OpenGL 3)
 #include "Global.h"
 #include "Form1.h"
+#include "imgui/backends/imgui_impl_win32.h"
+#include "imgui/backends/imgui_impl_opengl3.h"
 #include <tchar.h>
+#include <windows.h>
 #pragma comment(lib, "opengl32.lib")
 
 extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -1048,10 +1269,11 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
+IGOD::App* IGOD::g_app = nullptr;   // Global.h extern tanımı (file scope)
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, hInst, nullptr, nullptr, nullptr, nullptr, L"IMGodApp", nullptr };
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, u8"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, L"IMGUI GOD SSS TIER — Uygulama", WS_OVERLAPPEDWINDOW,
         100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
     if (!CreateGL(hwnd)) { MessageBoxW(hwnd, L"OpenGL bağlamı oluşturulamadı.", L"Hata", MB_OK | MB_ICONERROR); return 1; }
     ShowWindow(hwnd, SW_SHOWDEFAULT);
@@ -1059,6 +1281,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    IGOD::SetupFonts();   // fonts/DejaVu*.ttf — Türkçe karakter desteği
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     __THEMECALL__
@@ -1224,14 +1447,21 @@ std::string EmitMingwScript(const std::string& pn) {
     case EditorBackend::OPENGL3: backendFlag = "-lopengl32"; implFile = "imgui_impl_opengl3.cpp"; break;
     }
     std::ostringstream o;
-    o << "#!/bin/bash\n# IMGUI_GOD_SSSTIER üretimi — MinGW/clang bağımsız derleme\n";
-    o << "set -e\nCXX=${CXX:-x86_64-w64-mingw32-clang++}\n";
-    o << "cd \"$(dirname \"$0\")\"\n";
+    o << "#!/bin/bash\n# IMGUI_GOD_SSSTIER üretimi — MinGW/GCC/clang bağımsız derleme (x64)\n";
+    o << "set -e\ncd \"$(dirname \"$0\")\"\nmkdir -p Bin\n";
+    o << "CXX=${CXX:-}\n";
+    o << "if [ -z \"$CXX\" ]; then\n";
+    o << "  for c in x86_64-w64-mingw32-clang++ x86_64-w64-mingw32-g++-posix x86_64-w64-mingw32-g++ i686-w64-mingw32-g++; do\n";
+    o << "    command -v \"$c\" >/dev/null 2>&1 && CXX=\"$c\" && break\n";
+    o << "  done\n";
+    o << "fi\n";
+    o << "[ -n \"$CXX\" ] || { echo 'MinGW derleyicisi bulunamadı (x86_64-w64-mingw32-g++)'; exit 1; }\n";
     o << "SRCS=\"main.cpp";
     for (auto& f : forms::All()) o << " " << f.name << ".cpp";
     o << " imgui/imgui.cpp imgui/imgui_draw.cpp imgui/imgui_tables.cpp imgui/imgui_widgets.cpp";
     o << " imgui/backends/" << implFile << " imgui/backends/imgui_impl_win32.cpp\"\n";
-    o << "$CXX -O2 -std=c++17 -municode -mwindows -o Bin/" << pn << ".exe $SRCS " << backendFlag
+    o << "\"$CXX\" -O2 -std=c++17 -municode -mwindows -static -o Bin/" << pn << ".exe $SRCS "
+      << " -I. -Iimgui -Iimgui/backends " << backendFlag
       << " -luuid -lole32 -lgdi32 -lwinmm -limm32\n";
     o << "echo OK: Bin/" << pn << ".exe\n";
     return o.str();
@@ -1244,10 +1474,27 @@ static std::string LowerFirst(std::string s) {
     return s;
 }
 bool CopyImGuiSdk(const std::string& destRoot) {
-    std::string src = JoinPathA(g_exeDirA, g_settings.imguiDir);
-    if (!FileExistsA(src)) return false;
+    // ImGui SDK konumu: exe yanı VEYA exe'nin üst klasörlerinde (Bin/.. gibi)
+    std::string src;
+    {
+        std::vector<std::string> roots{ g_exeDirA };
+        for (int up = 0; up < 4; up++) {
+            size_t slash = roots.back().find_last_of("/\\");
+            if (slash == std::string::npos) break;
+            roots.push_back(roots.back().substr(0, slash));
+        }
+        roots.push_back(".");
+        for (auto& r : roots) {
+            std::string cand = JoinPathA(r, g_settings.imguiDir);
+            if (FileExistsA(cand)) { src = cand; break; }
+        }
+    }
+    if (src.empty()) return false;
     std::string dst = JoinPathA(destRoot, "imgui");
     if (!MkDirsA(dst) || !MkDirsA(JoinPathA(dst, "backends"))) return false;
+    // kaynak backends düzeni: SDK (imgui/backends/) VEYA düz (editör imgui/ sınıfsız)
+    std::string srcBack = JoinPathA(src, "backends");
+    if (!FileExistsA(srcBack)) srcBack = src;
     const char* core[] = {
         "imgui.h", "imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", "imgui_demo.cpp",
         "imgui_internal.h", "imconfig.h", "imstb_rectpack.h", "imstb_textedit.h", "imstb_truetype.h", "LICENSE.txt",
@@ -1261,16 +1508,16 @@ bool CopyImGuiSdk(const std::string& destRoot) {
     std::vector<std::string> be{ BackendImpl(), "imgui_impl_win32.cpp" };
     for (auto& b : be) {
         std::string data;
-        if (!ReadFileTextA(JoinPathA(JoinPathA(src, "backends"), b), data)) return false;
+        if (!ReadFileTextA(JoinPathA(srcBack, b), data)) return false;
         if (!WriteFileTextA(JoinPathA(JoinPathA(dst, "backends"), b), data)) return false;
         // eş .h dosyası
         std::string h = b.substr(0, b.size() - 4) + ".h";
-        if (ReadFileTextA(JoinPathA(JoinPathA(src, "backends"), h), data))
+        if (ReadFileTextA(JoinPathA(srcBack, h), data))
             WriteFileTextA(JoinPathA(JoinPathA(dst, "backends"), h), data);
     }
     if (g_settings.backend == (int)EditorBackend::OPENGL3) {
         std::string data;
-        if (ReadFileTextA(JoinPathA(JoinPathA(src, "backends"), "imgui_impl_opengl3_loader.h"), data))
+        if (ReadFileTextA(JoinPathA(srcBack, "imgui_impl_opengl3_loader.h"), data))
             WriteFileTextA(JoinPathA(JoinPathA(dst, "backends"), "imgui_impl_opengl3_loader.h"), data);
     }
     return true;
@@ -1279,6 +1526,7 @@ bool CopyImGuiSdk(const std::string& destRoot) {
 // ---------------------------------------------------------------------------
 //  TAM PROJE YAYINI
 bool EmitProject(const std::string& folder) {
+    forms::ParkActiveToModel();   // g_model → aktif form girdisi (üretim güncel veriyle)
     if (!MkDirsA(folder)) return false;
     std::string pn = g_settings.projectName;
     // klasör yapısı: <folder>/<pn>/ kaynaklar, <folder>/<pn>.sln
@@ -1288,6 +1536,36 @@ bool EmitProject(const std::string& folder) {
 
     // ImGui SDK kopyası
     if (!CopyImGuiSdk(projDir)) return false;
+    // fonts/ kopyala (DejaVu — Türkçe karakter desteği; editör exe yanı/üstlerinden)
+    {
+        const char* cand[] = { "fonts/DejaVuSans.ttf", "fonts\\DejaVuSans.ttf" };
+        std::string srcFont;
+        // exe yanında ve üstlerinde ara
+        std::vector<std::string> roots{ g_exeDirA };
+        for (int up = 0; up < 3; up++) {
+            std::string r = roots.back();
+            size_t slash = r.find_last_of("/\\");
+            if (slash == std::string::npos) break;
+            roots.push_back(r.substr(0, slash));
+        }
+        roots.push_back(".");
+        for (auto& r : roots) {
+            std::string f = JoinPathA(r, "fonts/DejaVuSans.ttf");
+            std::string data;
+            if (ReadFileTextA(f, data)) { srcFont = r; break; }
+        }
+        if (!srcFont.empty()) {
+            std::string dstFonts = JoinPathA(projDir, "fonts");
+            MkDirsA(dstFonts);
+            const char* names[] = { "DejaVuSans.ttf", "DejaVuSansMono.ttf" };
+            for (auto& n2 : names) {
+                std::string data;
+                if (ReadFileTextA(JoinPathA(srcFont, std::string("fonts/") + n2), data))
+                    WriteFileTextA(JoinPathA(dstFonts, n2), data);
+            }
+        }
+    }
+
 
     // Global.h
     if (!WriteFileTextA(JoinPathA(projDir, "Global.h"), EmitGlobalH())) return false;

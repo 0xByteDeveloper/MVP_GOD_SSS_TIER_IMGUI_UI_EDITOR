@@ -1,0 +1,452 @@
+    45→    45→// ============================================================================
+    46→    46→
+    47→    47→std::wstring ActiveFormName() {
+    48→    48→    auto it = g_model.formProps.find(L"Name");
+    49→    49→    if (it != g_model.formProps.end() && !it->second.empty()) return it->second;
+    50→    50→    return L"Form1";
+    51→    51→}
+    52→    52→
+    53→    53→// başlangıç (wWinMain sahibi) form: listedeki ilk form
+    54→    54→static bool IsStartupForm() { return forms::ActiveIndex() == 0; }
+    55→    55→
+    56→    56→// şablon metnini belirtilen form adına çevir
+    57→    57→static std::wstring TmplFix(std::wstring t, const std::wstring& name) {
+    58→    58→    if (name.empty() || name == L"Form1") return t;   // Form1 = birebir eski davranış
+    59→    59→    std::wstring ns = L"M2God" + name;                 // M2GodForm2...
+    60→    60→    t = ReplaceAll(t, L"M2GodForm1", ns);               // pencere sınıf dizisi (L"M2GodForm1")
+    61→    61→    t = ReplaceAll(t, L"M2GodForm::", ns + L"::");
+    62→    62→    t = ReplaceAll(t, L"namespace M2GodForm", L"namespace " + ns);
+    63→    63→    t = ReplaceAll(t, L"Form1_WndProc", name + L"_WndProc");
+    64→    64→    t = ReplaceAll(t, L"Form1.cpp", name + L".cpp");
+    65→    65→    t = ReplaceAll(t, L"Form1.h", name + L".h");
+    66→    66→    return t;
+    67→    67→}
+    68→    68→
+    69→    69→// ikincil form için wWinMain yerine Show<Ad> fonksiyonu üret
+    70→    70→// (g_model = o an yüklü olan form olmalı)
+    71→    71→// FAZ 2.9: yaratma/özellik uygulama/tema geçişi M2CreateForm içinde ortak —
+    72→    72→// Show<Ad> yalnız ona delege eder (her form Tema menüsünü kendi barında taşır)
+    73→    73→static std::wstring MakeSecondaryMain(const std::wstring& name) {
+    74→    74→    std::wostringstream o;
+    75→    75→    o << L"// FAZ 2.7: ikincil form — başlangıç noktası (wWinMain) Form1.cpp içindedir.\n";
+    76→    76→    o << L"// Bu formu göstermek için (ör. bir düğmenin Click işleyicisinden):\n";
+    77→    77→    o << L"//     #include \"" << name << L".h\"\n";
+    78→    78→    o << L"//     HWND h2 = Show" << name << L"(hWnd);\n";
+    79→    79→    o << L"HWND Show" << name << L"(HWND owner) {\n";
+    80→    80→    o << L"    HINSTANCE hInst = GetModuleHandleW(NULL);\n";
+    81→    81→    o << L"    M2God" << name << L"::EnsureStatics(hInst);\n";
+    82→    82→    o << L"    return M2CreateForm(hInst, SW_SHOWNORMAL, owner);   // FAZ 2.9: ortak yaratma\n";
+    83→    83→    o << L"}\n\n";
+    84→    84→    return o.str();
+    85→    85→}
+    86→    86→
+    87→    87→// üretilmiş metinden wWinMain bloğunu kes → yerine repl koy
+    88→    88→static bool StripWinMain(std::wstring& t, const std::wstring& repl) {
+    89→    89→    size_t b = t.find(L"int APIENTRY wWinMain");
+    90→    90→    size_t e = t.find(L"//== M2GOD:WNDPROC-END");
+    91→    91→    if (b == std::wstring::npos || e == std::wstring::npos || e < b) return false;
+    92→    92→    t = t.substr(0, b) + repl + t.substr(e);
+    93→    93→    return true;
+    94→    94→}
+    95→    95→
+    96→    96→// tip → Global.h sarmalayıcı sınıf adı
+    97→    97→static std::wstring M2TypeOf(const std::wstring& type) {
+    98→    98→    struct M { const wchar_t* a; const wchar_t* b; };
+    99→    99→    static const M map[] = {
+   100→   100→        { L"Button", L"Button" }, { L"CheckBox", L"CheckBox" }, { L"RadioButton", L"RadioButton" },
+   101→   101→        { L"GroupBox", L"GroupBox" }, { L"Label", L"Label" }, { L"LinkLabel", L"Label" },
+   102→   102→        { L"TextBox", L"TextBox" }, { L"MaskedTextBox", L"TextBox" }, { L"NumericUpDown", L"NumericUpDown" },
+   103→   103→        { L"RichTextBox", L"RichTextBox" }, { L"ComboBox", L"ComboBox" },
+   104→   104→        { L"ListBox", L"ListBox" }, { L"CheckedListBox", L"CheckedListBox" },
+   105→   105→        { L"ListView", L"ListView" }, { L"TreeView", L"TreeView" },
+   106→   106→        { L"ProgressBar", L"ProgressBar" }, { L"TrackBar", L"TrackBar" },
+   107→   107→        { L"HScrollBar", L"HScrollBar" }, { L"VScrollBar", L"VScrollBar" },
+   108→   108→        { L"DateTimePicker", L"DateTimePicker" }, { L"MonthCalendar", L"MonthCalendar" },
+   109→   109→        { L"TabControl", L"TabControl" }, { L"TabPage", L"TabPage" }, { L"StatusStrip", L"StatusStrip" },
+   110→   110→        { L"Panel", L"Panel" }, { L"FlowLayoutPanel", L"Panel" }, { L"TableLayoutPanel", L"Panel" },
+   111→   111→        { L"SplitContainer", L"Panel" }, { L"PictureBox", L"PictureBox" },
+   112→   112→        { L"LinkLabel", L"LinkLabel" }, { L"MenuStrip", L"MenuStrip" },
+   113→   113→        { L"ToolStrip", L"MenuStrip" }, { L"ContextMenuStrip", L"ContextMenuStrip" },
+   114→   114→    };
+   115→   115→    for (auto& m : map) if (_wcsicmp(m.a, type.c_str()) == 0) return m.b;
+   116→   116→    return L"Placeholder";
+   117→   117→}
+   118→   118→
+   119→   119→// Faz 2.5: görsel olmayan bileşenler için Global.h sarmalayıcısı (yoksa boş)
+   120→   120→static std::wstring M2ComponentTypeOf(const std::wstring& type) {
+   121→   121→    struct M { const wchar_t* a; const wchar_t* b; };
+   122→   122→    static const M map[] = {
+   123→   123→        { L"NotifyIcon", L"NotifyIcon" }, { L"ToolTip", L"ToolTip" },
+   124→   124→        { L"BackgroundWorker", L"BackgroundWorker" }, { L"Process", L"Process" },
+   125→   125→        { L"SerialPort", L"SerialPort" },
+   126→   126→        { L"OpenFileDialog", L"OpenFileDialog" }, { L"SaveFileDialog", L"SaveFileDialog" },
+   127→   127→        { L"ColorDialog", L"ColorDialog" }, { L"FontDialog", L"FontDialog" },
+   128→   128→        { L"FolderBrowserDialog", L"FolderBrowserDialog" },
+   129→   129→    };
+   130→   130→    for (auto& m : map) if (_wcsicmp(m.a, type.c_str()) == 0) return m.b;
+   131→   131→    return L"";
+   132→   132→}
+   133→   133→
+   134→   134→const char* GlobalVersionMark() { return "M2GOD-GLOBAL v2100"; }
+   135→   135→
+   136→   136→// ============================================================================
+   137→   137→//  Global.h şablonu — M2God TAM KAPSAMLI SDK (Faz 2.6)
+   138→   138→//  Şablon ayrı dosyada: src/global_template.inc (M2GOD-GLOBAL v2601, C++14 uyumlu)
+   139→   139→//  Config_info.json'daki tüm kontroller/bileşenler/diyaloglar + enumlar + Color
+   140→   140→// ============================================================================
+   141→   141→std::wstring GenerateGlobalH() {
+   142→   142→    static const char kTemplate[] =
+   143→   143→#include "global_template.inc"
+   144→   144→    ;
+   145→   145→    return Utf8ToWide(kTemplate);
+   146→   146→}
+   147→   147→
+   148→   148→// kontrol için CREATE satırı üretimi (PARENT-AWARE, FAZ 2.5 TAM KAPSAMLI)
+   149→   149→static std::wstring BoolLit(const std::wstring& v, bool def = false) {
+   150→   150→    if (v.empty()) return def ? L"true" : L"false";
+   151→   151→    return _wcsicmp(v.c_str(), L"true") == 0 ? L"true" : L"false";
+   152→   152→}
+   153→   153→
+   154→   154→// görsel olmayan SDK bileşenleri (Faz 2.5)
+   155→   155→static std::wstring EmitComponentCreate(const Ctrl* c) {
+   156→   156→    std::wostringstream o;
+   157→   157→    const std::wstring& t = c->type;
+   158→   158→    if (t == L"OpenFileDialog" || t == L"SaveFileDialog") {
+   159→   159→        o << L"    " << c->name << L" = new M2God::" << t << L"();\n";
+   160→   160→        std::wstring f = c->Get(L"Filter");   if (!f.empty())  o << L"    " << c->name << L"->Filter = L\"" << EscCppStr(f) << L"\";\n";
+   161→   161→        std::wstring fn = c->Get(L"FileName"); if (!fn.empty()) o << L"    " << c->name << L"->FileName = L\"" << EscCppStr(fn) << L"\";\n";
+   162→   162→        std::wstring ti = c->Get(L"Title");   if (!ti.empty()) o << L"    " << c->name << L"->Title = L\"" << EscCppStr(ti) << L"\";\n";
+   163→   163→        std::wstring id = c->Get(L"InitialDirectory"); if (!id.empty()) o << L"    " << c->name << L"->InitialDirectory = L\"" << EscCppStr(id) << L"\";\n";
+   164→   164→        if (BoolLit(c->Get(L"Multiselect")) != L"false")
+   165→   165→            o << L"    " << c->name << L"->Multiselect = " << BoolLit(c->Get(L"Multiselect")) << L";\n";
+   166→   166→        if (t == L"SaveFileDialog") {
+   167→   167→            std::wstring de = c->Get(L"DefaultExt"); if (!de.empty()) o << L"    " << c->name << L"->DefaultExt = L\"" << EscCppStr(de) << L"\";\n";
+   168→   168→            if (_wcsicmp(c->Get(L"OverwritePrompt", L"True").c_str(), L"false") == 0)
+   169→   169→                o << L"    " << c->name << L"->OverwritePrompt = false;\n";
+   170→   170→        }
+   171→   171→        return o.str();
+   172→   172→    }
+   173→   173→    if (t == L"ColorDialog") {
+   174→   174→        o << L"    " << c->name << L" = new M2God::ColorDialog();\n";
+   175→   175→        if (_wcsicmp(c->Get(L"FullOpen", L"False").c_str(), L"true") == 0)
+   176→   176→            o << L"    " << c->name << L"->FullOpen = true;\n";
+   177→   177→        return o.str();
+   178→   178→    }
+   179→   179→    if (t == L"FontDialog") {
+   180→   180→        o << L"    " << c->name << L" = new M2God::FontDialog();\n";
+   181→   181→        return o.str();
+   182→   182→    }
+   183→   183→    if (t == L"FolderBrowserDialog") {
+   184→   184→        o << L"    " << c->name << L" = new M2God::FolderBrowserDialog();\n";
+   185→   185→        std::wstring d = c->Get(L"Description"); if (!d.empty()) o << L"    " << c->name << L"->Description = L\"" << EscCppStr(d) << L"\";\n";
+   186→   186→        return o.str();
+   187→   187→    }
+   188→   188→    if (t == L"BackgroundWorker") {
+   189→   189→        o << L"    " << c->name << L" = new M2God::BackgroundWorker();\n";
+   190→   190→        o << L"    " << c->name << L"->Owner = hWnd;\n";
+   191→   191→        if (_wcsicmp(c->Get(L"WorkerReportsProgress", L"False").c_str(), L"true") == 0)
+   192→   192→            o << L"    " << c->name << L"->WorkerReportsProgress = true;\n";
+   193→   193→        if (_wcsicmp(c->Get(L"WorkerSupportsCancellation", L"False").c_str(), L"true") == 0)
+   194→   194→            o << L"    " << c->name << L"->WorkerSupportsCancellation = true;\n";
+   195→   195→        auto ev = c->events.find(L"DoWork");
+   196→   196→        if (ev != c->events.end() && !ev->second.empty())
+   197→   197→            o << L"    " << c->name << L"->DoWork = [](){ " << ev->second << L"(M2God::Form::Handle); };\n";
+   198→   198→        auto evp = c->events.find(L"ProgressChanged");
+   199→   199→        if (evp != c->events.end() && !evp->second.empty())
+   200→   200→            o << L"    " << c->name << L"->ProgressChanged = [](int p){ " << evp->second << L"(M2God::Form::Handle); (void)p; };\n";
+   201→   201→        auto evc = c->events.find(L"RunWorkerCompleted");
+   202→   202→        if (evc != c->events.end() && !evc->second.empty())
+   203→   203→            o << L"    " << c->name << L"->RunWorkerCompleted = [](){ " << evc->second << L"(M2God::Form::Handle); };\n";
+   204→   204→        return o.str();
+   205→   205→    }
+   206→   206→    if (t == L"NotifyIcon") {
+   207→   207→        o << L"    " << c->name << L" = new M2God::NotifyIcon(hWnd);\n";
+   208→   208→        std::wstring tx = c->Get(L"Text"); if (!tx.empty()) o << L"    " << c->name << L"->Text = L\"" << EscCppStr(tx) << L"\";\n";
+   209→   209→        if (_wcsicmp(c->Get(L"Visible", L"True").c_str(), L"true") == 0)
+   210→   210→            o << L"    " << c->name << L"->Visible = true;\n";
+   211→   211→        std::wstring bt = c->Get(L"BalloonTipTitle"); if (!bt.empty()) o << L"    " << c->name << L"->BalloonTipTitle = L\"" << EscCppStr(bt) << L"\";\n";
+   212→   212→        std::wstring bx = c->Get(L"BalloonTipText");  if (!bx.empty()) o << L"    " << c->name << L"->BalloonTipText = L\"" << EscCppStr(bx) << L"\";\n";
+   213→   213→        return o.str();
+   214→   214→    }
+   215→   215→    if (t == L"ToolTip") {
+   216→   216→        o << L"    " << c->name << L" = new M2God::ToolTip(hWnd);\n";
+   217→   217→        if (_wcsicmp(c->Get(L"Active", L"True").c_str(), L"false") == 0)
+   218→   218→            o << L"    " << c->name << L"->Active = false;\n";
+   219→   219→        return o.str();
+   220→   220→    }
+   221→   221→    if (t == L"Process") {
+   222→   222→        o << L"    " << c->name << L" = new M2God::Process();\n";
+   223→   223→        std::wstring fn = c->Get(L"FileName");  if (!fn.empty()) o << L"    " << c->name << L"->FileName = L\"" << EscCppStr(fn) << L"\";\n";
+   224→   224→        std::wstring ar = c->Get(L"Arguments"); if (!ar.empty()) o << L"    " << c->name << L"->Arguments = L\"" << EscCppStr(ar) << L"\";\n";
+   225→   225→        return o.str();
+   226→   226→    }
+   227→   227→    if (t == L"SerialPort") {
+   228→   228→        o << L"    " << c->name << L" = new M2God::SerialPort();\n";
+   229→   229→        std::wstring pn = c->Get(L"PortName"); if (!pn.empty()) o << L"    " << c->name << L"->PortName = L\"" << EscCppStr(pn) << L"\";\n";
+   230→   230→        std::wstring br = c->Get(L"BaudRate"); if (!br.empty() && iswdigit(br[0])) o << L"    " << c->name << L"->BaudRate = " << _wtoi(br.c_str()) << L";\n";
+   231→   231→        return o.str();
+   232→   232→    }
+   233→   233→    o << L"    // " << t << L" bileşeni (Global.h sarmalayıcısı yok — katalog bilgi amaçlı)\n";
+   234→   234→    return o.str();
+   235→   235→}
+   236→   236→
+   237→   237→// enum değeri → ContentAlignment sabiti (tasarım metni WinForms adı)
+   238→   238→static std::wstring EmitContentAlignment(const std::wstring& v) {
+   239→   239→    if (_wcsicmp(v.c_str(), L"TopLeft") == 0) return L"M2God::ContentAlignment::TopLeft";
+   240→   240→    if (_wcsicmp(v.c_str(), L"TopCenter") == 0) return L"M2God::ContentAlignment::TopCenter";
+   241→   241→    if (_wcsicmp(v.c_str(), L"TopRight") == 0) return L"M2God::ContentAlignment::TopRight";
+   242→   242→    if (_wcsicmp(v.c_str(), L"BottomLeft") == 0) return L"M2God::ContentAlignment::BottomLeft";
+   243→   243→    if (_wcsicmp(v.c_str(), L"BottomCenter") == 0) return L"M2God::ContentAlignment::BottomCenter";
+   244→   244→    if (_wcsicmp(v.c_str(), L"BottomRight") == 0) return L"M2God::ContentAlignment::BottomRight";
+   245→   245→    if (_wcsicmp(v.c_str(), L"Left") == 0 || _wcsicmp(v.c_str(), L"MiddleLeft") == 0) return L"M2God::ContentAlignment::MiddleLeft";
+   246→   246→    if (_wcsicmp(v.c_str(), L"Right") == 0 || _wcsicmp(v.c_str(), L"MiddleRight") == 0) return L"M2God::ContentAlignment::MiddleRight";
+   247→   247→    return L"M2God::ContentAlignment::MiddleCenter";
+   248→   248→}
+   249→   249→
+   250→   250→static std::wstring EmitCreateCall(const Ctrl* c) {
+   251→   251→    std::wostringstream o;
+   252→   252→    if (c->type == L"Timer") {
+   253→   253→        o << L"    " << c->name << L" = new M2God::Timer(hWnd, " << IdMacroOf(c->name) << L");\n";
+   254→   254→        o << L"    " << c->name << L"->Interval = " << c->Get(L"Interval", L"100") << L";\n";
+   255→   255→        if (_wcsicmp(c->Get(L"Enabled", L"False").c_str(), L"true") == 0)
+   256→   256→            o << L"    " << c->name << L"->Enabled = true;   // tasarımda Enabled=True\n";
+   257→   257→        else
+   258→   258→            o << L"    // " << c->name << L"->Enabled = true;   // Timer'ı başlatmak için\n";
+   259→   259→        return o.str();
+   260→   260→    }
+   261→   261→    if (!M2ComponentTypeOf(c->type).empty()) return EmitComponentCreate(c);
+   262→   262→    if (c->nonVisual) return EmitComponentCreate(c);
+   263→   263→    // --- FAZ 2.6: TabPage — tabControl1->TabPages->Add(L"...", ID_) ---
+   264→   264→    if (c->type == L"TabPage") {
+   265→   265→        std::wstring tabName = c->parent ? c->parent->name : std::wstring(L"tabControl1");
+   266→   266→        o << L"    // sayfa: " << c->name << L" (" << tabName << L")\n";
+   267→   267→        o << L"    " << c->name << L" = " << tabName << L"->TabPages->Add(L\""
+   268→   268→          << EscCppStr(c->Get(L"Text")) << L"\", " << IdMacroOf(c->name) << L");\n";
+   269→   269→        {
+   270→   270→            std::wstring bv = c->Get(L"BackColor");
+   271→   271→            if (!bv.empty() && _wcsicmp(bv.c_str(), L"Control") != 0) {
+   272→   272→                COLORREF cr;
+   273→   273→                if (ParseColor(bv, cr))
+   274→   274→                    o << L"    " << c->name << L"->BackColor = RGB(" << (int)GetRValue(cr) << L", "
+   275→   275→                      << (int)GetGValue(cr) << L", " << (int)GetBValue(cr) << L");\n";
+   276→   276→            }
+   277→   277→            std::wstring fv = c->Get(L"ForeColor");
+   278→   278→            if (!fv.empty() && _wcsicmp(fv.c_str(), L"ControlText") != 0) {
+   279→   279→                COLORREF cr;
+   280→   280→                if (ParseColor(fv, cr))
+   281→   281→                    o << L"    " << c->name << L"->ForeColor = RGB(" << (int)GetRValue(cr) << L", "
+   282→   282→                      << (int)GetGValue(cr) << L", " << (int)GetBValue(cr) << L");\n";
+   283→   283→            }
+   284→   284→        }
+   285→   285→        if (_wcsicmp(c->Get(L"Enabled", L"True").c_str(), L"false") == 0)
+   286→   286→            o << L"    " << c->name << L"->Enabled = false;\n";
+   287→   287→        { std::wstring tg = c->Get(L"Tag"); if (!tg.empty())
+   288→   288→            o << L"    " << c->name << L"->Tag = L\"" << EscCppStr(tg) << L"\";\n"; }
+   289→   289→        { std::wstring tt = c->Get(L"ToolTipText"); if (!tt.empty())
+   290→   290→            o << L"    " << c->name << L"->ToolTipText = L\"" << EscCppStr(tt) << L"\";\n"; }
+   291→   291→        return o.str();
+   292→   292→    }
+   293→   293→    factory::Win32Class m = factory::MapClass(c->type);
+   294→   294→    if (m.cls.empty()) return EmitComponentCreate(c);
+   295→   295→    std::wstring parentVar = c->parent ? (c->parent->name + L"->Handle") : std::wstring(L"hWnd");
+   296→   296→    if (c->parent)
+   297→   297→        o << L"    // " << c->name << L" → " << c->parent->name << L" içine (child)\n";
+   298→   298→    std::wstring txt = c->Get(L"Text");
+   299→   299→    std::wstring esc = EscCppStr(txt);
+   300→   300→    bool isTabCtrl = (c->type == L"TabControl");
+   301→   301→    std::wstring ctorText = isTabCtrl ? L"" : esc;   // TabControl sayfaları Pages->Add ile eklenir
+   302→   302→    std::wstring ctorArgs = parentVar + L", " + IdMacroOf(c->name) + L", L\"" + ctorText + L"\", " +
+   303→   303→                            std::to_wstring(c->x) + L", " + std::to_wstring(c->y) + L", " +
+   304→   304→                            std::to_wstring(c->w) + L", " + std::to_wstring(c->h);
+   305→   305→    // TextBox ailesi: multiline parametresi
+   306→   306→    if (c->type == L"TextBox" || c->type == L"MaskedTextBox" || c->type == L"NumericUpDown") {
+   307→   307→        bool ml = (c->type == L"TextBox") && _wcsicmp(c->Get(L"MultiLine", L"False").c_str(), L"true") == 0;
+   308→   308→        ctorArgs += ml ? L", true" : L", false";
+   309→   309→    }
+   310→   310→    o << L"    " << c->name << L" = new M2God::" << M2TypeOf(c->type) << L"(" << ctorArgs << L");\n";
+   311→   311→    // --- özellik emisyonu ---
+   312→   312→    // Items (ListBox/CheckedListBox/ComboBox): her satır bir öğe
+   313→   313→    // (ListView kendi bloğunda '|' ile hücre ayrımıyla üretilir)
+   314→   314→    auto itItems = c->props.find(L"Items");
+   315→   315→    if (c->type != L"ListView" && itItems != c->props.end() && !itItems->second.empty()) {
+   316→   316→        o << L"    " << c->name << L"->Items->Clear();\n";
+   317→   317→        for (auto& line : Split(itItems->second, L'\n')) {
+   318→   318→            std::wstring t = Trim(line);
+   319→   319→            if (!t.empty())
+   320→   320→                o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(t) << L"\");\n";
+   321→   321→        }
+   322→   322→    }
+   323→   323→    // FAZ 2.6.3: ListView Sütunlar (tasarımcı "Columns": her satır "Başlık, Genişlik")
+   324→   324→    if (c->type == L"ListView") {
+   325→   325→        auto itCols = c->props.find(L"Columns");
+   326→   326→        if (itCols != c->props.end() && !itCols->second.empty()) {
+   327→   327→            o << L"    " << c->name << L"->Columns->Clear();\n";
+   328→   328→            for (auto& line : Split(itCols->second, L'\n')) {
+   329→   329→                std::wstring t = Trim(line);
+   330→   330→                if (t.empty()) continue;
+   331→   331→                auto parts = Split(t, L',');
+   332→   332→                std::wstring title = Trim(parts[0]);
+   333→   333→                int width = 120;
+   334→   334→                if (parts.size() >= 2) width = _wtoi(Trim(parts[1]).c_str());
+   335→   335→                if (width <= 0) width = 120;
+   336→   336→                o << L"    " << c->name << L"->Columns->Add(L\"" << EscCppStr(title) << L"\", "
+   337→   337→                  << width << L");\n";
+   338→   338→            }
+   339→   339→        }
+   340→   340→        // ListView Items: her satır bir liste satırı; hücreler '|' ile ayrılır
+   341→   341→        auto itLI = c->props.find(L"Items");
+   342→   342→        if (itLI != c->props.end() && !itLI->second.empty()) {
+   343→   343→            o << L"    " << c->name << L"->Items->Clear();\n";
+   344→   344→            int rowIdx = 0;
+   345→   345→            for (auto& line : Split(itLI->second, L'\n')) {
+   346→   346→                std::wstring t = Trim(line);
+   347→   347→                if (t.empty()) continue;
+   348→   348→                auto cells = Split(t, L'|');
+   349→   349→                for (auto& cc : cells) cc = Trim(cc);
+   350→   350→                if (cells.size() == 1)
+   351→   351→                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\");\n";
+   352→   352→                else if (cells.size() == 2)
+   353→   353→                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\", L\""
+   354→   354→                      << EscCppStr(cells[1]) << L"\");\n";
+   355→   355→                else if (cells.size() == 3)
+   356→   356→                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\", L\""
+   357→   357→                      << EscCppStr(cells[1]) << L"\", L\"" << EscCppStr(cells[2]) << L"\");\n";
+   358→   358→                else {
+   359→   359→                    o << L"    " << c->name << L"->Items->Add(L\"" << EscCppStr(cells[0]) << L"\");\n";
+   360→   360→                    for (int k = 1; k < (int)cells.size() && k <= 4; k++)
+   361→   361→                        o << L"    " << c->name << L"->Items->SetSub(" << rowIdx << L", " << k
+   362→   362→                          << L", L\"" << EscCppStr(cells[k]) << L"\");\n";
+   363→   363→                }
+   364→   364→                rowIdx++;
+   365→   365→            }
+   366→   366→        }
+   367→   367→    }
+   368→   368→    // FAZ 2.6.3: TreeView Düğümler (tasarımcı "Nodes": girinti = alt seviye)
+   369→   369→    if (c->type == L"TreeView") {
+   370→   370→        auto itN = c->props.find(L"Nodes");
+   371→   371→        if (itN != c->props.end() && !itN->second.empty()) {
+   372→   372→            o << L"    " << c->name << L"->Nodes->Clear();\n";
+   373→   373→            int flat = 0;
+   374→   374→            int lastAtLevel[16];
+   375→   375→            for (int k = 0; k < 16; k++) lastAtLevel[k] = -1;
+   376→   376→            for (auto& line : Split(itN->second, L'\n')) {
+   377→   377→                std::wstring t = line;
+   378→   378→                if (!t.empty() && t.back() == L'\r') t.pop_back();
+   379→   379→                int level = 0; size_t pos = 0;
+   380→   380→                while (pos < t.size()) {
+   381→   381→                    if (t[pos] == L'\t') { level++; pos++; }
+   382→   382→                    else if (t[pos] == L' ') {
+   383→   383→                        int sp = 0;
+   384→   384→                        while (pos < t.size() && t[pos] == L' ') { sp++; pos++; }
+   385→   385→                        level += sp / 4;
+   386→   386→                    } else break;
+   387→   387→                }
+   388→   388→                std::wstring text = Trim(t.substr(pos));
+   389→   389→                if (text.empty()) continue;
+   390→   390→                if (level >= 16) level = 15;
+   391→   391→                if (level == 0 || lastAtLevel[level - 1] < 0)
+   392→   392→                    o << L"    " << c->name << L"->Nodes->Add(L\"" << EscCppStr(text) << L"\");\n";
+   393→   393→                else
+   394→   394→                    o << L"    " << c->name << L"->Nodes->AddChild(" << lastAtLevel[level - 1]
+   395→   395→                      << L", L\"" << EscCppStr(text) << L"\");\n";
+   396→   396→                lastAtLevel[level] = flat; flat++;
+   397→   397→                for (int k = level + 1; k < 16; k++) lastAtLevel[k] = -1;
+   398→   398→            }
+   399→   399→        }
+   400→   400→    }
+   401→   401→    {
+   402→   402→        std::wstring si = c->Get(L"SelectedIndex");
+   403→   403→        if (!si.empty() && iswdigit(si[0]) && _wtoi(si.c_str()) >= 0)
+   404→   404→            o << L"    " << c->name << L"->Items->SelectedIndex = " << _wtoi(si.c_str()) << L";\n";
+   405→   405→    }
+   406→   406→    // BackColor / ForeColor
+   407→   407→    {
+   408→   408→        std::wstring bv = c->Get(L"BackColor");
+   409→   409→        if (!bv.empty() && _wcsicmp(bv.c_str(), L"Control") != 0) {
+   410→   410→            COLORREF cr;
+   411→   411→            if (ParseColor(bv, cr))
+   412→   412→                o << L"    " << c->name << L"->BackColor = RGB(" << (int)GetRValue(cr) << L", "
+   413→   413→                  << (int)GetGValue(cr) << L", " << (int)GetBValue(cr) << L");\n";
+   414→   414→        }
+   415→   415→        std::wstring fv = c->Get(L"ForeColor");
+   416→   416→        if (!fv.empty() && _wcsicmp(fv.c_str(), L"ControlText") != 0) {
+   417→   417→            COLORREF cr;
+   418→   418→            if (ParseColor(fv, cr))
+   419→   419→                o << L"    " << c->name << L"->ForeColor = RGB(" << (int)GetRValue(cr) << L", "
+   420→   420→                  << (int)GetGValue(cr) << L", " << (int)GetBValue(cr) << L");\n";
+   421→   421→        }
+   422→   422→    }
+   423→   423→    // Font
+   424→   424→    {
+   425→   425→        std::wstring fnt = c->Get(L"Font", L"Segoe UI, 9pt");
+   426→   426→        std::wstring fn; int pt; bool bo, it, un;
+   427→   427→        if (ParseFontValue(fnt, fn, pt, bo, it, un)) {
+   428→   428→            bool isDefault = (_wcsicmp(fn.c_str(), L"Segoe UI") == 0 && pt == 9 && !bo && !it && !un);
+   429→   429→            if (!isDefault) {
+   430→   430→                o << L"    " << c->name << L"->Font = M2God::MakeFont(L\"" << EscCppStr(fn) << L"\", "
+   431→   431→                  << pt << L", " << (bo ? L"true" : L"false") << L", " << (it ? L"true" : L"false")
+   432→   432→                  << L", " << (un ? L"true" : L"false") << L");\n";
+   433→   433→            }
+   434→   434→        }
+   435→   435→    }
+   436→   436→    // Checked (CheckBox/RadioButton)
+   437→   437→    if ((c->type == L"CheckBox" || c->type == L"RadioButton") && _wcsicmp(c->Get(L"Checked", L"False").c_str(), L"true") == 0)
+   438→   438→        o << L"    " << c->name << L"->Checked = true;\n";
+   439→   439→    // Enabled / Visible
+   440→   440→    if (_wcsicmp(c->Get(L"Enabled", L"True").c_str(), L"false") == 0)
+   441→   441→        o << L"    " << c->name << L"->Enabled = false;\n";
+   442→   442→    if (_wcsicmp(c->Get(L"Visible", L"True").c_str(), L"false") == 0)
+   443→   443→        o << L"    " << c->name << L"->Visible = false;\n";
+   444→   444→
+   445→   445→    // ===================== FAZ 2.5: KAPSAMLI ÖZELLİK EMİSYONU =====================
+   446→   446→    const std::wstring& T = c->type;
+   447→   447→    std::wstring N = c->name;
+   448→   448→    // TextBox / MaskedTextBox
+   449→   449→    if (T == L"TextBox" || T == L"MaskedTextBox") {
+   450→   450→        if (_wcsicmp(c->Get(L"ReadOnly", L"False").c_str(), L"true") == 0)
+   451→   451→            o << L"    " << N << L"->ReadOnly = true;\n";
+   452→   452→        { std::wstring v = c->Get(L"MaxLength"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+   453→   453→            o << L"    " << N << L"->MaxLength = " << _wtoi(v.c_str()) << L";\n"; }
+   454→   454→        { std::wstring v = c->Get(L"PasswordChar");
+   455→   455→          if (!v.empty() && v[0]) o << L"    " << N << L"->PasswordChar = L'" << v[0] << L"';\n"; }
+   456→   456→        { std::wstring v = c->Get(L"CharacterCasing");
+   457→   457→          if (_wcsicmp(v.c_str(), L"Upper") == 0) o << L"    " << N << L"->CharacterCasing = M2God::CharacterCasing::Upper;\n";
+   458→   458→          else if (_wcsicmp(v.c_str(), L"Lower") == 0) o << L"    " << N << L"->CharacterCasing = M2God::CharacterCasing::Lower;\n"; }
+   459→   459→        { std::wstring v = c->Get(L"TextAlign");
+   460→   460→          if (_wcsicmp(v.c_str(), L"Center") == 0) o << L"    " << N << L"->TextAlign = M2God::HorizontalAlignment::Center;\n";
+   461→   461→          else if (_wcsicmp(v.c_str(), L"Right") == 0) o << L"    " << N << L"->TextAlign = M2God::HorizontalAlignment::Right;\n"; }
+   462→   462→        if (T == L"MaskedTextBox") {
+   463→   463→            std::wstring mk = c->Get(L"Mask"); if (!mk.empty()) o << L"    " << N << L"->Mask = L\"" << EscCppStr(mk) << L"\";   // bilgi amaçlı\n";
+   464→   464→        }
+   465→   465→    }
+   466→   466→    // NumericUpDown
+   467→   467→    if (T == L"NumericUpDown") {
+   468→   468→        { std::wstring v = c->Get(L"Minimum"); if (!v.empty() && iswdigit(v[0])) o << L"    " << N << L"->Minimum = " << _wtoi(v.c_str()) << L";\n"; }
+   469→   469→        { std::wstring v = c->Get(L"Maximum"); if (!v.empty() && iswdigit(v[0])) o << L"    " << N << L"->Maximum = " << _wtoi(v.c_str()) << L";\n"; }
+   470→   470→        { std::wstring v = c->Get(L"Value");   if (!v.empty() && iswdigit(v[0])) o << L"    " << N << L"->Value = " << _wtoi(v.c_str()) << L";\n"; }
+   471→   471→        { std::wstring v = c->Get(L"Increment"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0) o << L"    " << N << L"->Increment = " << _wtoi(v.c_str()) << L";\n"; }
+   472→   472→        if (_wcsicmp(c->Get(L"ReadOnly", L"False").c_str(), L"true") == 0)
+   473→   473→            o << L"    " << N << L"->ReadOnly = true;\n";
+   474→   474→    }
+   475→   475→    // RichTextBox
+   476→   476→    if (T == L"RichTextBox") {
+   477→   477→        if (_wcsicmp(c->Get(L"ReadOnly", L"False").c_str(), L"true") == 0)
+   478→   478→            o << L"    " << N << L"->ReadOnly = true;\n";
+   479→   479→        { std::wstring v = c->Get(L"MaxLength"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+   480→   480→            o << L"    " << N << L"->MaxLength = " << _wtoi(v.c_str()) << L";\n"; }
+   481→   481→    }
+   482→   482→    // ComboBox
+   483→   483→    if (T == L"ComboBox") {
+   484→   484→        { std::wstring v = c->Get(L"DropDownStyle");
+   485→   485→          if (_wcsicmp(v.c_str(), L"DropDown") == 0) o << L"    " << N << L"->DropDownStyle = M2God::ComboBoxStyle::DropDown;\n";
+   486→   486→          else if (_wcsicmp(v.c_str(), L"Simple") == 0) o << L"    " << N << L"->DropDownStyle = M2God::ComboBoxStyle::Simple;\n"; }
+   487→   487→        { std::wstring v = c->Get(L"MaxLength"); if (!v.empty() && iswdigit(v[0]) && _wtoi(v.c_str()) > 0)
+   488→   488→            o << L"    " << N << L"->MaxLength = " << _wtoi(v.c_str()) << L";\n"; }
+   489→   489→    }
+   490→   490→    // ListView
+   491→   491→    if (T == L"ListView") {
+   492→   492→        { std::wstring v = c->Get(L"View");
+   493→   493→          if (_wcsicmp(v.c_str(), L"List") == 0) o << L"    " << N << L"->View = M2God::View::List;\n";
+   494→   494→          else if (_wcsicmp(v.c_str(), L"LargeIcon") == 0) o << L"    " << N << L"->View = M2God::View::LargeIcon;\n";
+
+[showing lines 45-494 of 1657; use offset=495 with limit to continue reading]

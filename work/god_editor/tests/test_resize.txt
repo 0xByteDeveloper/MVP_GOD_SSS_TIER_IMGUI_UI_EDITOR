@@ -1,0 +1,14 @@
+# HATA DÜZELTMESİ — FORM BOYUTLANDIRMA (kullanıcı hatası: sınır tanımadan büyüme)
+# Aşama 1: köşe sürüklemesi KESİN delta uygulamalı (eski kod her kare biriktirıp
+#          durmadan büyütüyordu): 430x460 → 550x520
+# Aşama 2: aşırı sürükleme canvas ALAN SINIRI ile kırpılmalı (mavi ekran hatası)
+snap off
+wait 30
+dragform 120 60
+wait 20
+save state_resize1.imgod
+wait 5
+dragform 4000 3000
+wait 20
+save state_resize2.imgod
+quit

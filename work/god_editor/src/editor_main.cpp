@@ -11,13 +11,16 @@
 #include "vsint.h"
 #include "codegen.h"
 #include "ui_editor.h"
+#include "canvas.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_dx9.h"
 #include "imgui_impl_dx10.h"
 #include "imgui_impl_opengl3.h"
+#include "imgui_impl_opengl3_loader.h"
 #include <d3d11.h>
 #include <d3d10.h>
 #include <d3d9.h>
@@ -185,6 +188,39 @@ static bool (*InitBE[5])(HWND) = { InitDX11, InitDX9, InitDX10, nullptr, InitGL3
 static void (*PresentBE[5])(HWND) = { PresentDX11, PresentDX9, PresentDX10, nullptr, PresentGL3 };
 static void (*ShutdownBE[5])() = { ShutdownDX11, ShutdownDX9, ShutdownDX10, nullptr, ShutdownGL3 };
 
+
+// ---------------------------------------------------------------------------
+//  fontlar: fonts/DejaVuSans.ttf (exe yanı / üst klasörler) — Türkçe destek
+//  Varsayılan ProggyClean yalnız ASCII'dir; ğ ş ı İ ö ü ç için TTF şart.
+// ---------------------------------------------------------------------------
+static std::string ProbeFontA(const char* rel) {
+    char exeDir[MAX_PATH];
+    GetModuleFileNameA(nullptr, exeDir, MAX_PATH);
+    char* slash = strrchr(exeDir, '\\');
+    if (slash) *slash = 0;
+    const char* affixes[] = { "", "\\..", "\\..\\..", "\\..\\..\\.." };
+    for (auto& a : affixes) {
+        std::string pth = std::string(exeDir) + a + "\\" + rel;
+        if (GetFileAttributesA(pth.c_str()) != INVALID_FILE_ATTRIBUTES) return pth;
+    }
+    char cwd[MAX_PATH];
+    if (GetCurrentDirectoryA(MAX_PATH, cwd)) {
+        std::string pth = std::string(cwd) + "\\" + rel;
+        if (GetFileAttributesA(pth.c_str()) != INVALID_FILE_ATTRIBUTES) return pth;
+    }
+    return "";
+}
+static void SetupFonts() {
+    ImGuiIO& io = ImGui::GetIO();
+    static const ImWchar ranges[] = { 0x0020, 0x01FF, 0x2010, 0x205F, 0x2190, 0x21FF, 0 };  // Latin-1 + Ext-A (ğ ş ı İ) + oklar
+    std::string sans = ProbeFontA("fonts\\DejaVuSans.ttf");
+    if (!sans.empty()) io.Fonts->AddFontFromFileTTF(sans.c_str(), 17.0f, nullptr, ranges);
+    else io.Fonts->AddFontDefault();
+    std::string mono = ProbeFontA("fonts\\DejaVuSansMono.ttf");
+    if (!mono.empty()) io.FontDefault = io.Fonts->AddFontFromFileTTF(mono.c_str(), 15.0f, nullptr, ranges);
+    io.Fonts->Build();
+}
+
 extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
 static LRESULT WINAPI WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
@@ -245,6 +281,15 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR cmdLine, int nShow) {
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowExW(0L, wc.lpszClassName, L"IMGUI GOD SSS TIER — UI Editör ve Kod Üreticisi",
         WS_OVERLAPPEDWINDOW, 60, 40, 1680, 960, nullptr, nullptr, wc.hInstance, nullptr);
+    // ---- ImGui bağlamı ÖNCE (backend init'leri GetIO çağırır) ----
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    SetupFonts();                     // DejaVu — Türkçe karakter desteği
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    // Not: NavEnableKeyboard KAPALI — ok tuşları nesne taşıma (editör kısayolları)
+    // için ayrılmıştır; klavye nav mavi vurgusu tasarım yüzeyini kapatıyordu.
+    io.IniFilename = nullptr;   // pencere konum kaydı yok — editör düzeni sabit
+
     if (!InitBE[g_es.editorBackend](hwnd)) {
         // motor açılamadı → DX11'e dön
         ShutdownBE[g_es.editorBackend]();
@@ -254,15 +299,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR cmdLine, int nShow) {
             return 1;
         }
     }
+    g_mainHwnd = hwnd;
     ShowWindow(hwnd, nShow);
     UpdateWindow(hwnd);
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.IniFilename = nullptr;   // pencere konum kaydı yok — editör düzeni sabit
     ImGui_ImplWin32_Init(hwnd);
+    // hata günlüğü: ImGui kullanım hatalarını logla (askeri düzey teşhis)
+    {
+        ImGuiContext* g = ImGui::GetCurrentContext();
+        if (g) g->ErrorCallback = [](ImGuiContext*, void*, const char* msg) {
+            fprintf(stderr, "IMGUI-ERR: %s\n", msg);
+        };
+    }
 
     theme::Apply(theme::TImGuiDark);
 
@@ -322,8 +369,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR cmdLine, int nShow) {
     }
 
     ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
-    ShutdownBE[g_es.editorBackend]();
+    ShutdownBE[g_es.editorBackend]();      // önce renderer backend kapanır
+    ImGui::DestroyContext();               // sonra bağlam
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
     return 0;
 }

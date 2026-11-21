@@ -1,0 +1,796 @@
+     1→     1→// ============================================================================
+     2→     2→//  canvas.cpp — WYSIWYG tasarım yüzeyi (TAM YENİDEN YAZIM).
+     3→     3→//
+     4→     4→//  Mimari:
+     5→     5→//   1) "##canvas_host" penceresi canvas alanını kaplar (zemin + ızgara).
+     6→     6→//   2) Tasarlanan form GERÇEK ImGui penceresi — ÜRETİM temasıyla çizilir
+     7→     7→//      (theme::PushProduction): editörde görünen = derlenince göreceğin.
+     8→     8→//   3) Her nesne objstyle::Push ile kendi stil/renk geçersiz kılmalarıyla
+     9→     9→//      çizilir (üretilen .cpp ile AYNI push dizisi).
+    10→    10→//   4) Tüm etiketler "metin##ad" → ImGui ID çakışması kesin olarak yok.
+    11→    11→//   5) Hit-dikdörtgenleri GetItemRectMin/Max ile toplanır → tıklama, seçim
+    12→    12→//      ve tutamaçlar GERÇEK çizim konumuyla hizalı (eski kayma hatası gitti).
+    13→    13→//   6) Çoklu seçim: tık / Ctrl+tık / rubber band (boş alanda sürükle) /
+    14→    14→//      grup taşıma / ok tuşları / Delete / Ctrl+C,X,V.
+    15→    15→//   7) Tutamaç üzerinde imleç: NWSE/NS/NESW/EW boyutlandırma imleçleri.
+    16→    16→// ============================================================================
+    17→    17→#include "canvas.h"
+    18→    18→#include "ui_editor.h"
+    19→    19→#include "forms.h"
+    20→    20→#include "theme.h"
+    21→    21→#include "objstyle.h"
+    22→    22→#include "codegen.h"
+    23→    23→#include <cstdio>
+    24→    24→#include <cstdlib>
+    25→    25→#include <cstring>
+    26→    26→#include <cmath>
+    27→    27→#include <map>
+    28→    28→#include <set>
+    29→    29→#include "imgui_internal.h"
+    30→    30→
+    31→    31→namespace canvas {
+    32→    32→
+    33→    33→std::string g_armTool;
+    34→    34→Ctrl* g_armParent = nullptr;
+    35→    35→
+    36→    36→// ---------------------------------------------------------------------------
+    37→    37→//  durum
+    38→    38→static ImVec2 s_canvasMin, s_canvasMax;
+    39→    39→static bool   s_hostHovered = false;      // canvas alanı hover (form dahil değil)
+    40→    40→
+    41→    41→// rubber band (toplu seçim)
+    42→    42→static bool   s_band = false;
+    43→    43→static ImVec2 s_bandStart, s_bandCur;
+    44→    44→
+    45→    45→// taşıma / boyutlandırma
+    46→    46→static bool s_dragBody = false;            // nesne gövdesi sürükleme (grup)
+    47→    47→static int   s_dragHandle = -1;            // birincil seçim tutamacı 0..7
+    48→    48→static ImVec2 s_dragStart;
+    49→    49→static std::map<Ctrl*, std::pair<int,int>> s_dragOrig;   // taşıma başlangıç konumları
+    50→    50→static int s_origX, s_origY, s_origW, s_origH;            // boyutlandırma başlangıcı
+    51→    51→static bool s_formDrag = false;            // form tutamacı sürükleme
+    52→    52→static int  s_formHandle = -1;
+    53→    53→
+    54→    54→// bu karede taranabilir yüzeyler (GERÇEK çizim konumları)
+    55→    55→struct WidgetRect { Ctrl* c; ImVec2 rmin, rmax; bool tray = false; };
+    56→    56→static std::vector<WidgetRect> s_hitRects;
+    57→    57→static ImVec2 s_formPos, s_formSize;        // çizilen formun gerçek dikdörtgeni
+    58→    58→
+    59→    59→// kalıcı metin arabellekleri (her InputText nesnesinin kendi tamponu)
+    60→    60→static std::map<const Ctrl*, std::string> s_textBufs;
+    61→    61→
+    62→    62→void ArmTool(const std::string& tool) { g_armTool = tool; g_armParent = nullptr; }
+    63→    63→bool IsArmed() { return !g_armTool.empty(); }
+    64→    64→void CancelArm() { g_armTool.clear(); g_armParent = nullptr; }
+    65→    65→
+    66→    66→void Select(Ctrl* c, bool additive) {
+    67→    67→    if (additive) g_model.ToggleSel(c);
+    68→    68→    else g_model.SelectOnly(c);
+    69→    69→}
+    70→    70→void SelectForm() { g_model.SelectForm(); }
+    71→    71→
+    72→    72→ImVec2 CtrlAbsPos(const Ctrl* c) {
+    73→    73→    int x = c->x, y = c->y;
+    74→    74→    for (Ctrl* p = c->parent; p; p = p->parent) { x += p->x; y += p->y; }
+    75→    75→    return ImVec2((float)x, (float)y);
+    76→    76→}
+    77→    77→
+    78→    78→// ---------------------------------------------------------------------------
+    79→    79→//  form başlık bayrakları (üretilen kodla aynı set + editör sabitlemeleri)
+    80→    80→static ImGuiWindowFlags FormWinFlagsOf(const Model& m) {
+    81→    81→    ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings;
+    82→    82→    auto it = m.formProps.find("Flags");
+    83→    83→    if (it != m.formProps.end())
+    84→    84→        for (auto& s : SplitW(Utf8ToWideStr(it->second), L'|')) {
+    85→    85→            std::string t = TrimA(WideStrToUtf8(s));
+    86→    86→            if (t == "NoTitleBar") flags |= ImGuiWindowFlags_NoTitleBar;
+    87→    87→            else if (t == "NoResize") flags |= ImGuiWindowFlags_NoResize;
+    88→    88→            else if (t == "NoMove") flags |= ImGuiWindowFlags_NoMove;
+    89→    89→            else if (t == "AlwaysAutoResize") flags |= ImGuiWindowFlags_AlwaysAutoResize;
+    90→    90→            else if (t == "NoScrollbar") flags |= ImGuiWindowFlags_NoScrollbar;
+    91→    91→            else if (t == "MenuBar") flags |= ImGuiWindowFlags_MenuBar;
+    92→    92→        }
+    93→    93→    for (Ctrl* c : m.ctrls) if (c->type == "Menu") { flags |= ImGuiWindowFlags_MenuBar; break; }
+    94→    94→    // editör sabitlemeleri (tasarım yüzeyinde form sabit kalır)
+    95→    95→    flags |= ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+    96→    96→             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus;
+    97→    97→    return flags;
+    98→    98→}
+    99→    99→
+   100→   100→// ---------------------------------------------------------------------------
+   101→   101→//  PushRect: gerçek çizim dikdörtgenini kaydet
+   102→   102→static void PushRect(Ctrl* c, bool tray = false) {
+   103→   103→    WidgetRect r; r.c = c;
+   104→   104→    r.rmin = ImGui::GetItemRectMin();
+   105→   105→    r.rmax = ImGui::GetItemRectMax();
+   106→   106→    r.tray = tray;
+   107→   107→    s_hitRects.push_back(r);
+   108→   108→}
+   109→   109→// güvenli: widget çizilmediyse (0 boyut vb.) sağlam bir dikdörtgen kaydet
+   110→   110→static void PushRectFallback(Ctrl* c) {
+   111→   111→    WidgetRect r; r.c = c;
+   112→   112→    ImVec2 p = ImGui::GetCursorScreenPos();
+   113→   113→    r.rmin = p;
+   114→   114→    r.rmax = ImVec2(p.x + (float)(c->w ? c->w : 60), p.y + (float)(c->h ? c->h : 20));
+   115→   115→    s_hitRects.push_back(r);
+   116→   116→}
+   117→   117→
+   118→   118→// nesne etiketi: görünen metin + benzersiz kimlik ("Buton##button1")
+   119→   119→static std::string WLabel(const Ctrl* c, const char* textProp, const char* defText) {
+   120→   120→    std::string t = c->Get(textProp, defText);
+   121→   121→    return t + "##" + c->name;
+   122→   122→}
+   123→   123→
+   124→   124→// ---------------------------------------------------------------------------
+   125→   125→//  nesne çizimi — üretilen kodla BİREBİR aynı ImGui dizisi (stil push'ları dahil)
+   126→   126→static void DrawCtrl(Ctrl* c, Model& m) {
+   127→   127→    const std::string& t = c->type;
+   128→   128→    const ImVec2 pos((float)c->x, (float)c->y);
+   129→   129→    int stylePacked = objstyle::Push(c);
+   130→   130→    bool disabled = c->GetB("Disabled");
+   131→   131→    if (disabled) ImGui::BeginDisabled();
+   132→   132→
+   133→   133→    if (t == "Button") {
+   134→   134→        int w = atoi(c->Get("SizeArgW", "120").c_str());
+   135→   135→        int h = atoi(c->Get("SizeArgH", "28").c_str());
+   136→   136→        ImVec2 sz((float)(c->w > 0 ? c->w : w), (float)(c->h > 0 ? c->h : h));
+   137→   137→        ImGui::SetCursorPos(pos);
+   138→   138→        if (c->GetB("Small")) ImGui::SmallButton(WLabel(c, "Text", "Buton").c_str());
+   139→   139→        else ImGui::Button(WLabel(c, "Text", "Buton").c_str(), sz);
+   140→   140→        PushRect(c);
+   141→   141→    } else if (t == "Checkbox") {
+   142→   142→        bool v = c->GetB("Checked");
+   143→   143→        ImGui::SetCursorPos(pos);
+   144→   144→        ImGui::Checkbox(WLabel(c, "Text", "Seçenek").c_str(), &v);
+   145→   145→        PushRect(c);
+   146→   146→    } else if (t == "RadioButton") {
+   147→   147→        bool v = c->GetB("Active");
+   148→   148→        ImGui::SetCursorPos(pos);
+   149→   149→        ImGui::RadioButton(WLabel(c, "Text", "Seçim").c_str(), &v);
+   150→   150→        PushRect(c);
+   151→   151→    } else if (t == "SliderFloat" || t == "SliderInt") {
+   152→   152→        float fv = (float)atof(c->Get("Value", "0").c_str());
+   153→   153→        int   iv = atoi(c->Get("Value", "0").c_str());
+   154→   154→        float mn = (float)atof(c->Get("Min", "0").c_str());
+   155→   155→        float mx = (float)atof(c->Get("Max", "100").c_str());
+   156→   156→        const char* fmt = c->Get("Format", t == "SliderFloat" ? "%.1f" : "%d").c_str();
+   157→   157→        ImGui::SetCursorPos(pos);
+   158→   158→        if (t == "SliderFloat") ImGui::SliderFloat(WLabel(c, "Text", "Değer").c_str(), &fv, mn, mx, fmt);
+   159→   159→        else ImGui::SliderInt(WLabel(c, "Text", "Değer").c_str(), &iv, (int)mn, (int)mx, fmt);
+   160→   160→        PushRect(c);
+   161→   161→    } else if (t == "DragFloat" || t == "DragInt") {
+   162→   162→        float fv = (float)atof(c->Get("Value", "0").c_str());
+   163→   163→        int   iv = atoi(c->Get("Value", "0").c_str());
+   164→   164→        float mn = (float)atof(c->Get("Min", "0").c_str());
+   165→   165→        float mx = (float)atof(c->Get("Max", "100").c_str());
+   166→   166→        ImGui::SetCursorPos(pos);
+   167→   167→        if (t == "DragFloat") ImGui::DragFloat(WLabel(c, "Text", "Değer").c_str(), &fv, (float)atof(c->Get("Speed", "1").c_str()), mn, mx);
+   168→   168→        else ImGui::DragInt(WLabel(c, "Text", "Değer").c_str(), &iv, (float)atof(c->Get("Speed", "1").c_str()), (int)mn, (int)mx);
+   169→   169→        PushRect(c);
+   170→   170→    } else if (t == "InputText" || t == "InputTextMultiline") {
+   171→   171→        // her nesnenin KALICI kendi tamponu (Value'dan başlatılır)
+   172→   172→        std::string& buf = s_textBufs[c];
+   173→   173→        if (buf.empty() && !c->Get("Value", "").empty()) buf = c->Get("Value", "");
+   174→   174→        else if (buf.empty()) buf.resize(1, '\0');
+   175→   175→        // tasarımdaki Value değişti mi? (props panelinden) — senkron
+   176→   176→        static std::map<const Ctrl*, std::string> lastVal;
+   177→   177→        std::string curVal = c->Get("Value", "");
+   178→   178→        if (lastVal[c] != curVal) { buf = curVal; lastVal[c] = curVal; }
+   179→   179→        if (buf.size() < 512) buf.resize(512, '\0'); else buf.resize(buf.size() + 1, '\0');
+   180→   180→        ImGuiInputTextFlags fl = ImGuiInputTextFlags_ReadOnly;
+   181→   181→        if (c->GetB("Password")) fl |= ImGuiInputTextFlags_Password;
+   182→   182→        ImGui::SetCursorPos(pos);
+   183→   183→        if (t == "InputText")
+   184→   184→            ImGui::InputText(WLabel(c, "Text", "Yazı").c_str(), &buf[0], (int)buf.size(), fl);
+   185→   185→        else {
+   186→   186→            ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "280").c_str())), (float)(c->h ? c->h : atoi(c->Get("Height", "120").c_str())));
+   187→   187→            ImGui::InputTextMultiline(WLabel(c, "Text", "Not").c_str(), &buf[0], buf.size(), sz, fl);
+   188→   188→        }
+   189→   189→        PushRect(c);
+   190→   190→    } else if (t == "InputInt" || t == "InputFloat") {
+   191→   191→        int iv = atoi(c->Get("Value", "0").c_str());
+   192→   192→        float fv = (float)atof(c->Get("Value", "0").c_str());
+   193→   193→        ImGui::SetCursorPos(pos);
+   194→   194→        if (t == "InputInt") ImGui::InputInt(WLabel(c, "Text", "Sayı").c_str(), &iv, atoi(c->Get("Step", "1").c_str()));
+   195→   195→        else ImGui::InputFloat(WLabel(c, "Text", "Sayı").c_str(), &fv, (float)atof(c->Get("Step", "1").c_str()));
+   196→   196→        PushRect(c);
+   197→   197→    } else if (t == "Combo" || t == "ListBox") {
+   198→   198→        int sel = atoi(c->Get("Selected", "0").c_str());
+   199→   199→        auto items = SplitW(Utf8ToWideStr(c->Get("Items", "")), L'|');
+   200→   200→        static std::vector<std::string> s_store;      // kare içi ömür güvenli depo
+   201→   201→        s_store.clear();
+   202→   202→        for (auto& i : items) s_store.push_back(WideStrToUtf8(i));
+   203→   203→        std::vector<const char*> ptrs;
+   204→   204→        for (auto& s : s_store) ptrs.push_back(s.c_str());
+   205→   205→        const char* cur = (sel >= 0 && sel < (int)ptrs.size()) ? ptrs[sel] : "";
+   206→   206→        ImGui::SetCursorPos(pos);
+   207→   207→        if (t == "Combo") {
+   208→   208→            if (ImGui::BeginCombo(WLabel(c, "Text", "Seçim").c_str(), cur)) ImGui::EndCombo();
+   209→   209→            PushRect(c);
+   210→   210→        } else {
+   211→   211→            int hi = atoi(c->Get("HeightItems", "5").c_str());
+   212→   212→            float hgt = ImGui::GetTextLineHeightWithSpacing() * (hi + 0.25f) + ImGui::GetStyle().FramePadding.y * 2.0f;
+   213→   213→            if (ImGui::BeginListBox(WLabel(c, "Text", "Liste").c_str(), ImVec2(0.0f, hgt))) {
+   214→   214→                for (auto& p : ptrs) ImGui::Selectable((std::string(p) + "##" + c->name).c_str(), false);
+   215→   215→                ImGui::EndListBox();
+   216→   216→            }
+   217→   217→            PushRect(c);
+   218→   218→        }
+   219→   219→    } else if (t == "ColorEdit4") {
+   220→   220→        ImVec4 col(atof(c->Get("R", "255").c_str()) / 255.0f,
+   221→   221→                    atof(c->Get("G", "255").c_str()) / 255.0f,
+   222→   222→                    atof(c->Get("B", "255").c_str()) / 255.0f,
+   223→   223→                    atof(c->Get("A", "255").c_str()) / 255.0f);
+   224→   224→        ImGui::SetCursorPos(pos);
+   225→   225→        ImGui::ColorEdit4(WLabel(c, "Text", "Renk").c_str(), &col.x,
+   226→   226→                          (c->GetB("AlphaPreview") ? 0 : ImGuiColorEditFlags_NoInputs));
+   227→   227→        PushRect(c);
+   228→   228→    } else if (t == "ProgressBar") {
+   229→   229→        ImGui::SetCursorPos(pos);
+   230→   230→        ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "200").c_str())), (float)(c->h ? c->h : atoi(c->Get("Height", "18").c_str())));
+   231→   231→        const char* ov = c->Get("Overlay", "").c_str();
+   232→   232→        ImGui::ProgressBar((float)atof(c->Get("Value", "0.5").c_str()), sz, ov[0] ? ov : nullptr);
+   233→   233→        PushRect(c);
+   234→   234→    } else if (t == "Separator") {
+   235→   235→        ImGui::SetCursorPos(pos);
+   236→   236→        ImGui::Separator();
+   237→   237→        PushRect(c);
+   238→   238→    } else if (t == "SeparatorText") {
+   239→   239→        ImGui::SetCursorPos(pos);
+   240→   240→        ImGui::SeparatorText(WLabel(c, "Text", "Bölüm").c_str());
+   241→   241→        PushRect(c);
+   242→   242→    } else if (t == "Text" || t == "TextColored" || t == "BulletText" || t == "LabelText") {
+   243→   243→        std::string lbl = WLabel(c, "Text", "Etiket");
+   244→   244→        ImGui::SetCursorPos(pos);
+   245→   245→        if (t == "Text") {
+   246→   246→            if (c->GetB("Wrapped")) ImGui::TextWrapped("%s", lbl.substr(0, lbl.find("##")).c_str());
+   247→   247→            else ImGui::Text("%s", lbl.substr(0, lbl.find("##")).c_str());
+   248→   248→        }
+   249→   249→        else if (t == "TextColored") {
+   250→   250→            ImVec4 col(atof(c->Get("R", "255").c_str()) / 255.0f,
+   251→   251→                        atof(c->Get("G", "200").c_str()) / 255.0f,
+   252→   252→                        atof(c->Get("B", "80").c_str()) / 255.0f, 1.0f);
+   253→   253→            ImGui::TextColored(col, "%s", lbl.substr(0, lbl.find("##")).c_str());
+   254→   254→        }
+   255→   255→        else if (t == "BulletText") ImGui::BulletText("%s", lbl.substr(0, lbl.find("##")).c_str());
+   256→   256→        else ImGui::LabelText(lbl.c_str(), "%s", c->Get("Value", "değer").c_str());
+   257→   257→        PushRect(c);
+   258→   258→    } else if (t == "PlotLines" || t == "PlotHistogram") {
+   259→   259→        ImGui::SetCursorPos(pos);
+   260→   260→        std::vector<float> data;
+   261→   261→        for (auto& s : SplitW(Utf8ToWideStr(c->Get("Items", "")), L'|')) data.push_back((float)wcstod(s.c_str(), nullptr));
+   262→   262→        if (data.empty()) data.push_back(0.0f);
+   263→   263→        ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "280").c_str())), (float)(c->h ? c->h : atoi(c->Get("Height", "120").c_str())));
+   264→   264→        std::string lbl = WLabel(c, "Text", "Grafik");
+   265→   265→        if (t == "PlotLines")
+   266→   266→            ImGui::PlotLines(lbl.c_str(), data.data(), (int)data.size(), 0, nullptr,
+   267→   267→                             (float)atof(c->Get("ScaleMin", "0").c_str()), (float)atof(c->Get("ScaleMax", "1").c_str()), sz);
+   268→   268→        else
+   269→   269→            ImGui::PlotHistogram(lbl.c_str(), data.data(), (int)data.size(), 0, nullptr, FLT_MAX, FLT_MAX, sz);
+   270→   270→        PushRect(c);
+   271→   271→    } else if (t == "ChildWindow") {
+   272→   272→        ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "300").c_str())), (float)(c->h ? c->h : atoi(c->Get("Height", "200").c_str())));
+   273→   273→        ImGui::SetCursorPos(pos);
+   274→   274→        ImGuiChildFlags cf = c->GetB("Border") ? ImGuiChildFlags_Borders : 0;
+   275→   275→        if (ImGui::BeginChild(c->name.c_str(), sz, cf)) {
+   276→   276→            for (Ctrl* ch : m.ChildrenOf(c)) DrawCtrl(ch, m);
+   277→   277→        }
+   278→   278→        ImGui::EndChild();
+   279→   279→        PushRect(c);
+   280→   280→    } else if (t == "GroupBox") {
+   281→   281→        // üretilen IGOD::GroupBox ile aynı görünüm: çerçeveli child + üst başlık
+   282→   282→        ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "320").c_str())), (float)(c->h ? c->h : atoi(c->Get("Height", "160").c_str())));
+   283→   283→        ImGui::SetCursorPos(pos);
+   284→   284→        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+   285→   285→        ImGui::BeginChild(c->name.c_str(), sz, ImGuiChildFlags_Borders);
+   286→   286→        for (Ctrl* ch : m.ChildrenOf(c)) DrawCtrl(ch, m);
+   287→   287→        ImVec2 rmin = ImGui::GetItemRectMin();
+   288→   288→        ImVec2 rmax = ImGui::GetItemRectMax();
+   289→   289→        ImGui::EndChild();
+   290→   290→        ImGui::PopStyleVar();
+   291→   291→        ImDrawList* dl = ImGui::GetWindowDrawList();
+   292→   292→        dl->AddRect(rmin, rmax, ImGui::GetColorU32(ImGuiCol_Border), 4.0f);
+   293→   293→        std::string txt = c->Get("Text", "Grup");
+   294→   294→        ImVec2 ts = ImGui::CalcTextSize(txt.c_str());
+   295→   295→        ImVec2 lp = ImVec2(rmin.x + 8, rmin.y - ts.y * 0.5f);
+   296→   296→        dl->AddRectFilled(ImVec2(lp.x - 4, lp.y - 1), ImVec2(lp.x + ts.x + 4, lp.y + ts.y + 1), ImGui::GetColorU32(ImGuiCol_WindowBg));
+   297→   297→        dl->AddText(lp, ImGui::GetColorU32(ImGuiCol_Text), txt.c_str());
+   298→   298→        PushRect(c);
+   299→   299→    } else if (t == "CollapsingHeader" || t == "TreeNode") {
+   300→   300→        ImGui::SetCursorPos(pos);
+   301→   301→        ImGuiTreeNodeFlags fl = c->GetB("DefaultOpen") ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+   302→   302→        bool open = (t == "CollapsingHeader") ? ImGui::CollapsingHeader(WLabel(c, "Text", "Başlık").c_str(), fl)
+   303→   303→                                              : ImGui::TreeNodeEx(WLabel(c, "Text", "Düğüm").c_str(), fl);
+   304→   304→        if (open) {
+   305→   305→            for (Ctrl* ch : m.ChildrenOf(c)) DrawCtrl(ch, m);
+   306→   306→            if (t == "TreeNode") ImGui::TreePop();
+   307→   307→        }
+   308→   308→        PushRect(c);
+   309→   309→    } else if (t == "TabBar") {
+   310→   310→        ImGui::SetCursorPos(pos);
+   311→   311→        if (ImGui::BeginTabBar(c->name.c_str(), ImGuiTabBarFlags_None)) {
+   312→   312→            for (auto& s : SplitW(Utf8ToWideStr(c->Get("Items", "Genel|Ayarlar")), L'|')) {
+   313→   313→                std::string title = WideStrToUtf8(s);
+   314→   314→                if (ImGui::BeginTabItem(title.c_str())) {
+   315→   315→                    for (Ctrl* ch : m.ChildrenOf(c)) {
+   316→   316→                        if (ch->Get("TabOwner", "") == title) DrawCtrl(ch, m);
+   317→   317→                    }
+   318→   318→                    ImGui::EndTabItem();
+   319→   319→                }
+   320→   320→            }
+   321→   321→            ImGui::EndTabBar();
+   322→   322→        }
+   323→   323→        PushRect(c);
+   324→   324→    } else if (t == "Table") {
+   325→   325→        ImGui::SetCursorPos(pos);
+   326→   326→        int cols = atoi(c->Get("Columns", "3").c_str());
+   327→   327→        int rows = atoi(c->Get("Rows", "3").c_str());
+   328→   328→        std::vector<std::string> heads;
+   329→   329→        for (auto& s : SplitW(Utf8ToWideStr(c->Get("Items", "Sütun1|Sütun2|Sütun3")), L'|'))
+   330→   330→            heads.push_back(WideStrToUtf8(s));
+   331→   331→        if (ImGui::BeginTable(c->name.c_str(), cols, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+   332→   332→            for (auto& h : heads) ImGui::TableSetupColumn(h.c_str());
+   333→   333→            ImGui::TableHeadersRow();
+   334→   334→            for (int r = 0; r < rows; r++) {
+   335→   335→                ImGui::TableNextRow();
+   336→   336→                for (int ci = 0; ci < cols; ci++) { ImGui::TableNextColumn(); ImGui::TextUnformatted("-"); }
+   337→   337→            }
+   338→   338→            ImGui::EndTable();
+   339→   339→        }
+   340→   340→        PushRect(c);
+   341→   341→    } else if (t == "Menu") {
+   342→   342→        // form penceresinin menü çubuğu — Form çiziminde işlenir (MenuBar bayrağı)
+   343→   343→    } else if (t == "Popup" || t == "Timer" || t == "FontRef") {
+   344→   344→        // görsel değil — bileşen tepsisinde
+   345→   345→    }
+   346→   346→
+   347→   347→    if (disabled) ImGui::EndDisabled();
+   348→   348→    objstyle::Pop(stylePacked);
+   349→   349→}
+   350→   350→
+   351→   351→// ---------------------------------------------------------------------------
+   352→   352→//  tıklama noktasındaki üstteki nesne (tray dahil değil)
+   353→   353→static WidgetRect* HitUnder(ImVec2 pt) {
+   354→   354→    for (int i = (int)s_hitRects.size() - 1; i >= 0; i--) {
+   355→   355→        WidgetRect& r = s_hitRects[i];
+   356→   356→        if (r.tray) continue;
+   357→   357→        if (pt.x >= r.rmin.x && pt.x <= r.rmax.x && pt.y >= r.rmin.y && pt.y <= r.rmax.y) return &r;
+   358→   358→    }
+   359→   359→    return nullptr;
+   360→   360→}
+   361→   361→void ClickSelectUnder(ImVec2 pt, bool additive) {
+   362→   362→    WidgetRect* r = HitUnder(pt);
+   363→   363→    if (r) Select(r->c, additive);
+   364→   364→    else SelectForm();
+   365→   365→}
+   366→   366→
+   367→   367→// ---------------------------------------------------------------------------
+   368→   368→//  çift tıkla araç ekleme (araç kutusu çift tık → aktif forma)
+   369→   369→bool AddArmedToForm() {
+   370→   370→    if (g_armTool.empty()) return false;
+   371→   371→    static int s_cascade = 0;
+   372→   372→    s_cascade = (s_cascade + 1) % 8;
+   373→   373→    int x = 24 + s_cascade * 16, y = 24 + s_cascade * 16;
+   374→   374→    Ctrl* c = g_model.Add(g_armTool, x, y, nullptr);
+   375→   375→    return c != nullptr;
+   376→   376→}
+   377→   377→
+   378→   378→// ---------------------------------------------------------------------------
+   379→   379→//  tutamaç yardımcıları
+   380→   380→// 0:SO 1:O 2:DO 3:D 4:DD 5:G 6:SD 7:S
+   381→   381→static void HandleCorners(ImVec2 rmin, ImVec2 rmax, ImVec2 out[8]) {
+   382→   382→    out[0] = rmin;
+   383→   383→    out[1] = ImVec2((rmin.x + rmax.x) / 2, rmin.y);
+   384→   384→    out[2] = ImVec2(rmax.x, rmin.y);
+   385→   385→    out[3] = ImVec2(rmax.x, (rmin.y + rmax.y) / 2);
+   386→   386→    out[4] = rmax;
+   387→   387→    out[5] = ImVec2((rmin.x + rmax.x) / 2, rmax.y);
+   388→   388→    out[6] = ImVec2(rmin.x, rmax.y);
+   389→   389→    out[7] = ImVec2(rmin.x, (rmin.y + rmax.y) / 2);
+   390→   390→}
+   391→   391→static int HandleIndexAt(ImVec2 pt, ImVec2 rmin, ImVec2 rmax, float hs) {
+   392→   392→    ImVec2 c[8];
+   393→   393→    HandleCorners(rmin, rmax, c);
+   394→   394→    for (int i = 0; i < 8; i++)
+   395→   395→        if (fabsf(pt.x - c[i].x) <= hs && fabsf(pt.y - c[i].y) <= hs) return i;
+   396→   396→    return -1;
+   397→   397→}
+   398→   398→// tutamaç → imleç eşlemesi (M2God: boyutlandırma imleçleri)
+   399→   399→static ImGuiMouseCursor CursorOfHandle(int i) {
+   400→   400→    switch (i) {
+   401→   401→    case 0: case 4: return ImGuiMouseCursor_ResizeNWSE;
+   402→   402→    case 1: case 5: return ImGuiMouseCursor_ResizeNS;
+   403→   403→    case 2: case 6: return ImGuiMouseCursor_ResizeNESW;
+   404→   404→    case 3: case 7: return ImGuiMouseCursor_ResizeEW;
+   405→   405→    }
+   406→   406→    return ImGuiMouseCursor_Arrow;
+   407→   407→}
+   408→   408→// sürükleme sırasında uygulanacak tutamaç (nesne form-göreli)
+   409→   409→static void ApplyHandle(Ctrl* c, int handle, ImVec2 d) {
+   410→   410→    int nx = c->x, ny = c->y, nw = s_origW, nh = s_origH;
+   411→   411→    if (handle == 0 || handle == 6 || handle == 7) { nw = s_origW - (int)d.x; nx = s_origX + (int)d.x; }
+   412→   412→    if (handle == 0 || handle == 1 || handle == 2) { nh = s_origH - (int)d.y; ny = s_origY + (int)d.y; }
+   413→   413→    if (handle == 2 || handle == 3 || handle == 4) nw = s_origW + (int)d.x;
+   414→   414→    if (handle == 4 || handle == 5 || handle == 6) nh = s_origH + (int)d.y;
+   415→   415→    nw = ImMax(nw, 12); nh = ImMax(nh, 8);
+   416→   416→    if (g_snapEnabled) {
+   417→   417→        nx = (nx + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
+   418→   418→        ny = (ny + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
+   419→   419→        nw = (nw + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
+   420→   420→        nh = (nh + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
+   421→   421→    }
+   422→   422→    c->x = nx; c->y = ny; c->w = nw; c->h = nh;
+   423→   423→    g_modelDirty = true;
+   424→   424→}
+   425→   425→static void ApplyFormHandle(Model& m, int handle, ImVec2 d) {
+   426→   426→    int nw = m.formW, nh = m.formH;
+   427→   427→    if (handle == 2 || handle == 3 || handle == 4) nw += (int)d.x;
+   428→   428→    if (handle == 4 || handle == 5 || handle == 6) nh += (int)d.y;
+   429→   429→    nw = ImMax(nw, 120); nh = ImMax(nh, 80);
+   430→   430→    if (g_snapEnabled) {
+   431→   431→        nw = (nw + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
+   432→   432→        nh = (nh + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
+   433→   433→    }
+   434→   434→    m.formW = nw; m.formH = nh;
+   435→   435→    m.formProps["ClientSize"] = std::to_string(m.formW) + ", " + std::to_string(m.formH);
+   436→   436→    g_modelDirty = true;
+   437→   437→}
+   438→   438→
+   439→   439→// seçim çerçevesi + tutamaçlar çiz (foreground — her şeyin üstünde)
+   440→   440→static void DrawSelFrame(ImDrawList* fg, ImVec2 rmin, ImVec2 rmax, bool primary, bool formFrame) {
+   441→   441→    ImU32 accent = primary ? IM_COL32(255, 176, 32, 255) : IM_COL32(255, 200, 80, 235);
+   442→   442→    fg->AddRect(ImVec2(rmin.x - 2, rmin.y - 2), ImVec2(rmax.x + 2, rmax.y + 2), accent, 0.0f, 0, primary ? 1.5f : 1.8f);
+   443→   443→    if (!primary) return;
+   444→   444→    ImVec2 c[8];
+   445→   445→    HandleCorners(rmin, rmax, c);
+   446→   446→    float hs = 4.5f;
+   447→   447→    for (int i = 0; i < 8; i++) {
+   448→   448→        fg->AddRectFilled(ImVec2(c[i].x - hs, c[i].y - hs), ImVec2(c[i].x + hs, c[i].y + hs), accent);
+   449→   449→        fg->AddRect(ImVec2(c[i].x - hs, c[i].y - hs), ImVec2(c[i].x + hs, c[i].y + hs), IM_COL32(0, 0, 0, 255));
+   450→   450→    }
+   451→   451→    (void)formFrame;
+   452→   452→}
+   453→   453→
+   454→   454→// ---------------------------------------------------------------------------
+   455→   455→//  ana çizim
+   456→   456→void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
+   457→   457→    s_canvasMin = rectMin; s_canvasMax = rectMax;
+   458→   458→    s_hitRects.clear();
+   459→   459→    Model& m = g_model;
+   460→   460→    ImGuiIO& io = ImGui::GetIO();
+   461→   461→    ImVec2 mp = io.MousePos;
+   462→   462→
+   463→   463→    // ================= 1) canvas zemin penceresi ============================
+   464→   464→    {
+   465→   465→        ImGui::SetNextWindowPos(rectMin);
+   466→   466→        ImGui::SetNextWindowSize(ImVec2(rectMax.x - rectMin.x, rectMax.y - rectMin.y));
+   467→   467→        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+   468→   468→        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+   469→   469→        ImGui::Begin("##canvas_host", nullptr,
+   470→   470→                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+   471→   471→                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+   472→   472→                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav);
+   473→   473→        ImGui::PopStyleVar(2);
+   474→   474→        ImDrawList* dl = ImGui::GetWindowDrawList();
+   475→   475→        dl->AddRectFilled(rectMin, rectMax, IM_COL32(38, 40, 48, 255));
+   476→   476→        if (g_gridVisible) {
+   477→   477→            ImU32 dot = IM_COL32(90, 94, 110, 200);
+   478→   478→            for (float x = rectMin.x; x < rectMax.x; x += GRID_SIZE)
+   479→   479→                for (float y = rectMin.y; y < rectMax.y; y += GRID_SIZE)
+   480→   480→                    dl->AddCircleFilled(ImVec2(x, y), 0.7f, dot, 4);
+   481→   481→        }
+   482→   482→        s_hostHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+   483→   483→        ImGui::End();
+   484→   484→    }
+   485→   485→
+   486→   486→    // ================= 2) tasarlanan form — ÜRETİM temasıyla =================
+   487→   487→    std::string title = m.formProps.count("Text") ? m.formProps["Text"] : "Form1";
+   488→   488→    if (title.empty()) title = "Form1";   // boş başlık → ImGui assert; daima dolu
+   489→   489→    ImGuiWindowFlags flags = FormWinFlagsOf(m);
+   490→   490→    ImVec2 formPos(rectMin.x + 40.0f, rectMin.y + 30.0f);
+   491→   491→    s_formPos = formPos;
+   492→   492→    s_formSize = ImVec2((float)m.formW, (float)m.formH);
+   493→   493→
+   494→   494→    theme::PushProduction(codegen::g_settings.themeId);   // WYSIWYG: üretim teması
+   495→   495→    // form düzeyi stil: WindowBg / Rounding / Border (props)
+   496→   496→    int nCol = 0, nVar = 0;
+   497→   497→    {
+   498→   498→        float f[4];
+   499→   499→        if (objstyle::ParseHexColor(m.formProps.count("WindowBgColor") ? m.formProps["WindowBgColor"] : "", f)) {
+   500→   500→            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(f[0], f[1], f[2], f[3]));
+   501→   501→            nCol++;
+   502→   502→        }
+   503→   503→        if (m.formProps.count("WindowRounding") && (float)atof(m.formProps["WindowRounding"].c_str()) >= 0) {
+   504→   504→            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, (float)atof(m.formProps["WindowRounding"].c_str()));
+   505→   505→            nVar++;
+   506→   506→        }
+   507→   507→        if (m.formProps.count("WindowBorderSize") && (float)atof(m.formProps["WindowBorderSize"].c_str()) >= 0) {
+   508→   508→            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, (float)atof(m.formProps["WindowBorderSize"].c_str()));
+   509→   509→            nVar++;
+   510→   510→        }
+   511→   511→
+   512→   512→        ImGui::SetNextWindowPos(formPos);
+   513→   513→        ImGui::SetNextWindowSize(ImVec2((float)m.formW, (float)m.formH));
+   514→   514→        bool open = ImGui::Begin(title.c_str(), nullptr, flags);
+   515→   515→        if (open) {
+   516→   516→            // menü (varsa) — üretilen kodla aynı Menus/Commands mantığı
+   517→   517→            for (Ctrl* c : m.ctrls) if (c->type == "Menu") {
+   518→   518→                if (ImGui::BeginMenuBar()) {
+   519→   519→                    for (auto& s : SplitW(Utf8ToWideStr(c->Get("Items", "Dosya|Düzen|Yardım")), L'|')) {
+   520→   520→                        std::string men = WideStrToUtf8(s);
+   521→   521→                        if (ImGui::BeginMenu(men.c_str())) {
+   522→   522→                            for (auto& cmd : SplitW(Utf8ToWideStr(c->Get("Commands", "")), L'|')) {
+   523→   523→                                std::string cline = WideStrToUtf8(cmd);
+   524→   524→                                size_t col = cline.find(':');
+   525→   525→                                if (col == std::string::npos) continue;
+   526→   526→                                std::string owner = TrimA(cline.substr(0, col));
+   527→   527→                                std::string item = TrimA(cline.substr(col + 1));
+   528→   528→                                if (owner == men && !item.empty()) ImGui::MenuItem((item + "##" + c->name).c_str());
+   529→   529→                            }
+   530→   530→                            ImGui::EndMenu();
+   531→   531→                        }
+   532→   532→                    }
+   533→   533→                    ImGui::EndMenuBar();
+   534→   534→                }
+   535→   535→            }
+   536→   536→            // üst-seviye nesneler (parent=null) — z sırası: listede son = üstte
+   537→   537→            for (Ctrl* c : m.ctrls) if (!c->parent && c->type != "Menu") DrawCtrl(c, m);
+   538→   538→        }
+   539→   539→        ImGui::End();
+   540→   540→        // Form her zaman canvas zemininin ÜSTÜNDE render edilsin:
+   541→   541→        // ImGui pencere z-sırası odak/oluşturma sırasına göredir — formu
+   542→   542→        // görüntü yığınının en öne taşı (host ızgarası/paneller örtmesin).
+   543→   543→        if (ImGuiWindow* fwz = ImGui::FindWindowByName(title.c_str()))
+   544→   544→            ImGui::BringWindowToDisplayFront(fwz);
+   545→   545→
+   546→   546→        if (nVar > 0) ImGui::PopStyleVar(nVar);
+   547→   547→        if (nCol > 0) ImGui::PopStyleColor(nCol);
+   548→   548→    }
+   549→   549→    theme::PopProduction();
+   550→   550→    // form penceresinin GERÇEK dikdörtgeni (başlık çubuğu dahil)
+   551→   551→    {
+   552→   552→        ImGuiWindow* fw = ImGui::FindWindowByName(title.c_str());
+   553→   553→        if (fw) { s_formPos = fw->Pos; s_formSize = fw->Size; }
+   554→   554→    }
+   555→   555→
+   556→   556→    // ================= 3) bileşen tepsisi (görsel olmayan) ====================
+   557→   557→    {
+   558→   558→        ImDrawList* dl = ImGui::GetForegroundDrawList();
+   559→   559→        float trayY = s_formPos.y + s_formSize.y + 14.0f;
+   560→   560→        float trayX = s_formPos.x;
+   561→   561→        dl->AddRectFilled(ImVec2(trayX, trayY), ImVec2(trayX + m.formW, trayY + 26), IM_COL32(33, 35, 42, 255), 3.0f);
+   562→   562→        dl->AddText(ImVec2(trayX + 6, trayY + 6), IM_COL32(150, 152, 160, 255), "Bile\305\237enler:");
+   563→   563→        float cx = trayX + 90;
+   564→   564→        for (Ctrl* c : m.ctrls) {
+   565→   565→            if (c->type == "Timer" || c->type == "FontRef" || c->type == "Popup") {
+   566→   566→                std::string lbl = "[ " + c->name + " ]";
+   567→   567→                ImVec2 ts = ImGui::CalcTextSize(lbl.c_str());
+   568→   568→                dl->AddRectFilled(ImVec2(cx, trayY + 3), ImVec2(cx + ts.x + 10, trayY + 23), IM_COL32(55, 58, 68, 255), 3.0f);
+   569→   569→                dl->AddText(ImVec2(cx + 5, trayY + 6), IM_COL32(200, 202, 210, 255), lbl.c_str());
+   570→   570→                WidgetRect r; r.c = c;
+   571→   571→                r.rmin = ImVec2(cx, trayY + 3); r.rmax = ImVec2(cx + ts.x + 10, trayY + 23);
+   572→   572→                r.tray = true;
+   573→   573→                s_hitRects.push_back(r);
+   574→   574→                cx += ts.x + 16;
+   575→   575→            }
+   576→   576→        }
+   577→   577→    }
+   578→   578→
+   579→   579→    // ================= 4) etkileşim durumu makinesi ==========================
+   580→   580→
+   581→   581→    // --- (a) yerleştirme modu: form İÇİNE tıklama yerleştirir, ESC iptal ---
+   582→   582→    if (!g_armTool.empty()) {
+   583→   583→        bool inForm = mp.x >= s_formPos.x && mp.x <= s_formPos.x + s_formSize.x &&
+   584→   584→                      mp.y >= s_formPos.y && mp.y <= s_formPos.y + s_formSize.y;
+   585→   585→        if (ImGui::IsMouseClicked(0) && inForm && !io.WantTextInput) {
+   586→   586→            // içerideki konteyneri bul (en üstteki)
+   587→   587→            Ctrl* parent = nullptr;
+   588→   588→            ImVec2 rmin, rmax;
+   589→   589→            for (int i = (int)s_hitRects.size() - 1; i >= 0; i--) {
+   590→   590→                Ctrl* cc = s_hitRects[i].c;
+   591→   591→                if (IsContainerType(cc->type) && !cc->nonVisual) {
+   592→   592→                    WidgetRect& r = s_hitRects[i];
+   593→   593→                    if (mp.x >= r.rmin.x && mp.x <= r.rmax.x && mp.y >= r.rmin.y && mp.y <= r.rmax.y) {
+   594→   594→                        parent = cc;
+   595→   595→                        rmin = r.rmin; rmax = r.rmax;
+   596→   596→                        break;
+   597→   597→                    }
+   598→   598→                }
+   599→   599→            }
+   600→   600→            int px, py;
+   601→   601→            if (parent) { px = (int)(mp.x - rmin.x); py = (int)(mp.y - rmin.y); }
+   602→   602→            else { px = (int)(mp.x - s_formPos.x); py = (int)(mp.y - s_formPos.y); }
+   603→   603→            if (g_snapEnabled) { px = px / GRID_SIZE * GRID_SIZE; py = py / GRID_SIZE * GRID_SIZE; }
+   604→   604→            Ctrl* added = g_model.Add(g_armTool, px, py, parent);
+   605→   605→            if (added) {
+   606→   606→                // araç ARMADA kalır: ESC'ye basana kadar ardışık yerleştirme
+   607→   607→                if (added->parent) { px = added->x; py = added->y; }
+   608→   608→            }
+   609→   609→        }
+   610→   610→    }
+   611→   611→
+   612→   612→    // --- (b) tutamaç yakalama (birincil seçim / form) ---
+   613→   613→    Ctrl* primary = m.Primary();
+   614→   614→    ImVec2 prMin, prMax;
+   615→   615→    bool havePrimaryRect = false;
+   616→   616→    if (primary) {
+   617→   617→        for (auto& r : s_hitRects)
+   618→   618→            if (r.c == primary && !r.tray) { prMin = r.rmin; prMax = r.rmax; havePrimaryRect = true; break; }
+   619→   619→        if (!havePrimaryRect && primary->type != "Menu" && primary->type != "Timer" &&
+   620→   620→            primary->type != "FontRef" && primary->type != "Popup") {
+   621→   621→            // çizilmemiş olabilir (kapalı sekme) — form konumuyla doğru yedek
+   622→   622→            prMin = ImVec2(s_formPos.x + CtrlAbsPos(primary).x, s_formPos.y + CtrlAbsPos(primary).y);
+   623→   623→            prMax = ImVec2(prMin.x + (float)(primary->w ? primary->w : 60), prMin.y + (float)(primary->h ? primary->h : 20));
+   624→   624→            havePrimaryRect = true;
+   625→   625→        } else if (!havePrimaryRect) {
+   626→   626→            // tepsi nesnesi (Timer/FontRef/Popup): tepsiden bul
+   627→   627→            for (auto& r : s_hitRects)
+   628→   628→                if (r.c == primary) { prMin = r.rmin; prMax = r.rmax; havePrimaryRect = true; break; }
+   629→   629→        }
+   630→   630→    }
+   631→   631→    bool haveFormRect = (m.formSelected && !m.selList.empty() ? false : true);
+   632→   632→
+   633→   633→    if (ImGui::IsMouseReleased(0)) {
+   634→   634→        s_dragBody = false;
+   635→   635→        if (s_dragHandle >= 0) s_dragHandle = -1;
+   636→   636→        s_formDrag = false;
+   637→   637→        s_formHandle = -1;
+   638→   638→    }
+   639→   639→
+   640→   640→    // tutamaç üzerinde imleç + tık yakalama
+   641→   641→    float hs = 5.5f;
+   642→   642→    if (havePrimaryRect && s_dragHandle < 0) {
+   643→   643→        int hi = HandleIndexAt(mp, prMin, prMax, hs);
+   644→   644→        if (hi >= 0) {
+   645→   645→            ImGui::SetMouseCursor(CursorOfHandle(hi));
+   646→   646→            if (ImGui::IsMouseClicked(0)) {
+   647→   647→                s_dragHandle = hi;
+   648→   648→                g_model.PushUndo();
+   649→   649→                s_origX = primary->x; s_origY = primary->y; s_origW = primary->w; s_origH = primary->h;
+   650→   650→                s_dragStart = mp;
+   651→   651→            }
+   652→   652→        }
+   653→   653→    }
+   654→   654→    // form seçili + form tutamaçları (sağ/alt/serbest köşeler formu boyutlandırır)
+   655→   655→    if (m.formSelected && s_dragHandle < 0 && !s_formDrag) {
+   656→   656→        int hi = HandleIndexAt(mp, s_formPos, ImVec2(s_formPos.x + s_formSize.x, s_formPos.y + s_formSize.y), hs);
+   657→   657→        if (hi >= 0) {
+   658→   658→            ImGui::SetMouseCursor(CursorOfHandle(hi));
+   659→   659→            if (ImGui::IsMouseClicked(0)) {
+   660→   660→                s_formHandle = hi;
+   661→   661→                s_formDrag = true;
+   662→   662→                g_model.PushUndo();
+   663→   663→                s_origX = m.formW; s_origY = m.formH;
+   664→   664→                s_dragStart = mp;
+   665→   665→            }
+   666→   666→        }
+   667→   667→    }
+   668→   668→    // sürükleme devamı
+   669→   669→    if (s_dragHandle >= 0 && ImGui::IsMouseDown(0) && primary) {
+   670→   670→        ImGui::SetMouseCursor(CursorOfHandle(s_dragHandle));
+   671→   671→        ApplyHandle(primary, s_dragHandle, ImVec2(mp.x - s_dragStart.x, mp.y - s_dragStart.y));
+   672→   672→    }
+   673→   673→    if (s_formDrag && ImGui::IsMouseDown(0) && s_formHandle >= 0) {
+   674→   674→        ImGui::SetMouseCursor(CursorOfHandle(s_formHandle));
+   675→   675→        ApplyFormHandle(m, s_formHandle, ImVec2(mp.x - s_dragStart.x, mp.y - s_dragStart.y));
+   676→   676→    }
+   677→   677→
+   678→   678→    // --- (c) gövde tıklaması: seçim + grup taşıma başlat ---
+   679→   679→    if (ImGui::IsMouseClicked(0) && s_dragHandle < 0 && !s_formDrag && g_armTool.empty()) {
+   680→   680→        WidgetRect* hit = HitUnder(mp);
+   681→   681→        if (hit) {
+   682→   682→            bool additive = io.KeyShift || io.KeyCtrl;
+   683→   683→            bool alreadySel = g_model.IsSelected(hit->c);
+   684→   684→            if (!alreadySel) Select(hit->c, additive);
+   685→   685→            else if (additive) { /* toggle yok — taşımaya izin ver */ }
+   686→   686→            // taşıma: seçimde olan nesne → grup sürükleme başlat
+   687→   687→            if (g_model.IsSelected(hit->c)) {
+   688→   688→                s_dragBody = true;
+   689→   689→                g_model.PushUndo();
+   690→   690→                s_dragOrig.clear();
+   691→   691→                for (Ctrl* c : g_model.ValidSelection()) s_dragOrig[c] = { c->x, c->y };
+   692→   692→                s_dragStart = mp;
+   693→   693→            }
+   694→   694→        } else if (s_hostHovered && mp.x >= rectMin.x && mp.x <= rectMax.x && mp.y >= rectMin.y && mp.y <= rectMax.y) {
+   695→   695→            // form gövdesi VEYA canvas boşluğu → rubber band başlat.
+   696→   696→            // (M2God: formda basılı tutup sürükleyerek toplu seçim; tek tık = form seçimi)
+   697→   697→            s_band = true;
+   698→   698→            s_bandStart = mp;
+   699→   699→            s_bandCur = mp;
+   700→   700→        }
+   701→   701→    }
+   702→   702→
+   703→   703→    // --- (d) rubber band sürükleme ---
+   704→   704→    if (s_band) {
+   705→   705→        if (ImGui::IsMouseDown(0)) s_bandCur = mp;
+   706→   706→        else {
+   707→   707→            // bırakıldı: alan içinde kalanları seç
+   708→   708→            ImVec2 bmin(ImMin(s_bandStart.x, s_bandCur.x), ImMin(s_bandStart.y, s_bandCur.y));
+   709→   709→            ImVec2 bmax(ImMax(s_bandStart.x, s_bandCur.x), ImMax(s_bandStart.y, s_bandCur.y));
+   710→   710→            bool tiny = (bmax.x - bmin.x < 4 && bmax.y - bmin.y < 4);
+   711→   711→            if (tiny) {
+   712→   712→                SelectForm();      // tık = seçim temizle
+   713→   713→            } else {
+   714→   714→                std::vector<Ctrl*> sel;
+   715→   715→                std::set<Ctrl*> seen;
+   716→   716→                for (auto& r : s_hitRects) {
+   717→   717→                    if (r.tray) continue;
+   718→   718→                    // kesişim testi
+   719→   719→                    if (r.rmin.x <= bmax.x && r.rmax.x >= bmin.x && r.rmin.y <= bmax.y && r.rmax.y >= bmin.y) {
+   720→   720→                        if (seen.insert(r.c).second) sel.push_back(r.c);
+   721→   721→                    }
+   722→   722→                }
+   723→   723→                // alt kontrolleri seçimden düşür (ebeveynleri de seçildiyse)
+   724→   724→                std::vector<Ctrl*> eff;
+   725→   725→                for (Ctrl* c : sel) {
+   726→   726→                    bool ancestorSel = false;
+   727→   727→                    for (Ctrl* p = c->parent; p; p = p->parent)
+   728→   728→                        if (seen.count(p)) { ancestorSel = true; break; }
+   729→   729→                    if (!ancestorSel) eff.push_back(c);
+   730→   730→                }
+   731→   731→                g_model.SetSelection(eff);
+   732→   732→            }
+   733→   733→            s_band = false;
+   734→   734→        }
+   735→   735→    }
+   736→   736→
+   737→   737→    // --- (e) grup taşıma devamı ---
+   738→   738→    if (s_dragBody && ImGui::IsMouseDown(0)) {
+   739→   739→        ImVec2 d(mp.x - s_dragStart.x, mp.y - s_dragStart.y);
+   740→   740→        for (auto& kv : s_dragOrig) {
+   741→   741→            Ctrl* c = kv.first;
+   742→   742→            int nx = kv.second.first + (int)d.x, ny = kv.second.second + (int)d.y;
+   743→   743→            if (g_snapEnabled) { nx = (nx + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE; ny = (ny + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE; }
+   744→   744→            c->x = nx; c->y = ny;
+   745→   745→        }
+   746→   746→        g_modelDirty = true;
+   747→   747→    }
+   748→   748→
+   749→   749→    // ================= 5) seçim vurguları (foreground) =======================
+   750→   750→    ImDrawList* fg = ImGui::GetForegroundDrawList();
+   751→   751→    // ikincil seçimler: in çerçeve
+   752→   752→    for (Ctrl* c : g_model.ValidSelection()) {
+   753→   753→        if (c == primary) continue;
+   754→   754→        for (auto& r : s_hitRects)
+   755→   755→            if (r.c == c && !r.tray) { DrawSelFrame(fg, r.rmin, r.rmax, false, false); break; }
+   756→   756→    }
+   757→   757→    // birincil seçim: dolu tutamaçlı çerçeve
+   758→   758→    if (havePrimaryRect) DrawSelFrame(fg, prMin, prMax, true, false);
+   759→   759→    // form seçimi: form çerçevesi + köşe tutamaçları
+   760→   760→    if (m.formSelected)
+   761→   761→        DrawSelFrame(fg, s_formPos, ImVec2(s_formPos.x + s_formSize.x, s_formPos.y + s_formSize.y), true, true);
+   762→   762→
+   763→   763→    // ================= 6) yerleştirme modu göstergesi ========================
+   764→   764→    if (!g_armTool.empty()) {
+   765→   765→        fg->AddRect(rectMin, rectMax, IM_COL32(90, 200, 120, 200), 4.0f, 0, 2.0f);
+   766→   766→        char b[160];
+   767→   767→        snprintf(b, sizeof b, "YERLE\305\236T\304\260R: %s  (form'a t\304\261kla — ESC iptal)", g_armTool.c_str());
+   768→   768→        ImVec2 ts = ImGui::CalcTextSize(b);
+   769→   769→        fg->AddRectFilled(ImVec2(rectMin.x + 8, rectMax.y - ts.y - 12), ImVec2(rectMin.x + 16 + ts.x, rectMax.y - 8), IM_COL32(20, 60, 30, 220), 3);
+   770→   770→        fg->AddText(ImVec2(rectMin.x + 12, rectMax.y - ts.y - 8), IM_COL32(120, 255, 150, 255), b);
+   771→   771→    }
+   772→   772→
+   773→   773→    // rubber band çizgisi (kesikli dikdörtgen)
+   774→   774→    if (s_band) {
+   775→   775→        ImVec2 bmin(ImMin(s_bandStart.x, s_bandCur.x), ImMin(s_bandStart.y, s_bandCur.y));
+   776→   776→        ImVec2 bmax(ImMax(s_bandStart.x, s_bandCur.x), ImMax(s_bandStart.y, s_bandCur.y));
+   777→   777→        for (float x = bmin.x; x < bmax.x; x += 6.0f) {
+   778→   778→            fg->AddLine(ImVec2(x, bmin.y), ImVec2(ImMin(x + 3, bmax.x), bmin.y), IM_COL32(255, 176, 32, 220), 1.0f);
+   779→   779→            fg->AddLine(ImVec2(x, bmax.y), ImVec2(ImMin(x + 3, bmax.x), bmax.y), IM_COL32(255, 176, 32, 220), 1.0f);
+   780→   780→        }
+   781→   781→        for (float y = bmin.y; y < bmax.y; y += 6.0f) {
+   782→   782→            fg->AddLine(ImVec2(bmin.x, y), ImVec2(bmin.x, ImMin(y + 3, bmax.y)), IM_COL32(255, 176, 32, 220), 1.0f);
+   783→   783→            fg->AddLine(ImVec2(bmax.x, y), ImVec2(bmax.x, ImMin(y + 3, bmax.y)), IM_COL32(255, 176, 32, 220), 1.0f);
+   784→   784→        }
+   785→   785→        char b[96];
+   786→   786→        snprintf(b, sizeof b, "%d x %d", (int)(bmax.x - bmin.x), (int)(bmax.y - bmin.y));
+   787→   787→        fg->AddText(ImVec2(bmin.x, bmin.y - 16), IM_COL32(255, 200, 120, 255), b);
+   788→   788→    }
+   789→   789→
+   790→   790→    // canvas çerçevesi
+   791→   791→    fg->AddRect(rectMin, rectMax, IM_COL32(20, 22, 28, 255), 0.0f, 0, 1.0f);
+   792→   792→    (void)haveFormRect;
+   793→   793→}
+   794→   794→
+   795→   795→} // namespace canvas
+   796→   796→

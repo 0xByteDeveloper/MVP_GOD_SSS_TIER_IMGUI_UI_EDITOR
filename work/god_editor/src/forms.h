@@ -24,6 +24,9 @@ FormEntry* Active();
 FormEntry* At(size_t i);
 std::vector<FormEntry>& All();
 
+// g_model ↔ aktif form senkronizasyonu (park/unpark)
+void ParkActiveToModel();      // g_model → aktif form girdisi (kayıt/üretim öncesi çağır)
+
 // form komutları
 std::string NewForm(const std::string& baseName = "");   // yeni ad döner
 void RenameActive(const std::string& newName);

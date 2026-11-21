@@ -1,0 +1,12 @@
+# TEMEL: ekleme + özellik + kayıt doğrulaması
+add Button 60 80
+add Checkbox 60 130
+add Combo 60 170
+set button1 Text "Merhaba Dünya"
+set button1 ButtonColor "#D25410"
+set button1 TextColor "#FFFFFF"
+set checkbox1 Text "Seçeneğim"
+form 430 520
+wait 30
+save state_basic.imgod
+quit

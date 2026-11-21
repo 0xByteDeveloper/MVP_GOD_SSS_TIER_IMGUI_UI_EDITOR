@@ -22,7 +22,7 @@
 constexpr int TOOLBOX_W  = 225;    // sol alt: araç kutusu genişliği
 constexpr int CODETREE_W = 260;    // sol üst: kod gezgini genişliği
 constexpr int FORMLIST_H = 150;    // sağ üst: formlar listesi yüksekliği
-constexpr int PROPS_W    = 320;    // sağ: özellikler paneli genişliği
+constexpr int PROPS_W    = 356;    // sağ: özellikler paneli genişliği
 constexpr int MENUBAR_H  = 20;
 constexpr int STATUSBAR_H = 24;
 constexpr int SPLIT_W    = 6;     // sürüklenebilir ayraç kalınlığı
@@ -72,3 +72,4 @@ extern bool g_gridVisible;
 extern bool g_snapEnabled;
 extern std::string g_statusText;
 extern std::string g_exeDirA;
+extern void* g_mainHwnd;      // editör ana pencere (HWND — selftest tıklama enjeksiyonu)

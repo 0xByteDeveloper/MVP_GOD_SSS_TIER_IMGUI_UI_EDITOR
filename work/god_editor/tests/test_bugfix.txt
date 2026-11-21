@@ -1,0 +1,13 @@
+# HATA DÜZELTMESİ — TEK YERLEŞTİRME (kullanıcı hatası: sınırsız oluşturma)
+# arm → forma tıkla: BİR nesne oluşur ve araç seçimi KALKAR.
+# İkinci tık YENİ nesne OLUŞTURMAMALI (yalnızca seçim/bant başlatır).
+add Button 60 80
+wait 30
+arm Button
+wait 5
+click 400 300
+wait 10
+click 500 340
+wait 10
+save state_bugfix.imgod
+quit

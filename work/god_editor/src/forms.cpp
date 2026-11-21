@@ -8,6 +8,39 @@ static std::vector<FormEntry> g_forms;
 static int g_active = 0;
 static std::string g_projectDir;
 
+// ---------------------------------------------------------------------------
+//  g_model ↔ aktif form senkronizasyonu (özgün M2God park/unpark mekanizması)
+//  Editör yüzeyi HER ZAMAN g_model'i düzenler; form değişince:
+//    park  : g_model → aktif form girdisine (derin kopya, JSON üzerinden güvenli)
+//    unpark: aktif form girdisi → g_model
+// ---------------------------------------------------------------------------
+void ParkActiveToModel() {
+    FormEntry* f = Active();
+    if (!f) return;
+    json::Value v = g_model.ToJson();
+    int keepW = f->model.formW, keepH = f->model.formH;
+    f->model.ClearAll();
+    f->model.FromJson(v);
+    f->model.formW = g_model.formW;
+    f->model.formH = g_model.formH;
+    f->model.formProps = g_model.formProps;
+    f->model.formEvents = g_model.formEvents;
+    if (f->model.formW <= 0) f->model.formW = keepW;
+    if (f->model.formH <= 0) f->model.formH = keepH;
+}
+void SyncModelFromActive() {
+    FormEntry* f = Active();
+    if (!f) return;
+    json::Value v = f->model.ToJson();
+    g_model.ClearAll();
+    g_model.FromJson(v);
+    g_model.formW = f->model.formW;
+    g_model.formH = f->model.formH;
+    g_model.formProps = f->model.formProps;
+    g_model.formEvents = f->model.formEvents;
+    g_model.SelectForm();
+}
+
 void Init() {
     g_forms.clear();
     FormEntry f;
@@ -20,6 +53,7 @@ void Init() {
     g_forms.push_back(std::move(f));
     g_active = 0;
     g_projectDir = "";
+    SyncModelFromActive();
 }
 size_t Count() { return g_forms.size(); }
 int ActiveIndex() { return g_active; }
@@ -45,9 +79,11 @@ std::string NewForm(const std::string& baseName) {
     f.model.formProps["Text"] = name;
     f.model.formProps["ClientSize"] = "430, 460";
     // diğerlerini park et
+    ParkActiveToModel();
     for (auto& ff : g_forms) ff.parked = true;
     g_forms.push_back(std::move(f));
     g_active = (int)g_forms.size() - 1;
+    SyncModelFromActive();
     g_modelDirty = true;
     return name;
 }
@@ -57,6 +93,9 @@ void RenameActive(const std::string& newName) {
     for (auto& ff : g_forms) if (ff.name == newName && &ff != f) return;  // çakışma
     f->name = newName;
     f->model.formProps["Name"] = newName;
+    g_model.formProps["Name"] = newName;
+    if (g_model.formProps.count("Text") && g_model.formProps["Text"] == "")
+        g_model.formProps["Text"] = newName;
     if (f->model.formProps.count("Text") && f->model.formProps["Text"] == "")
         f->model.formProps["Text"] = newName;
     g_modelDirty = true;
@@ -64,17 +103,21 @@ void RenameActive(const std::string& newName) {
 bool DeleteAt(int index) {
     if (g_forms.size() <= 1) return false;    // son form silinemez
     if (index < 0 || index >= (int)g_forms.size()) return false;
+    ParkActiveToModel();
     g_forms.erase(g_forms.begin() + index);
     if (g_active >= (int)g_forms.size()) g_active = (int)g_forms.size() - 1;
     if (g_active >= 0) g_forms[g_active].parked = false;
+    SyncModelFromActive();
     g_modelDirty = true;
     return true;
 }
 void SwitchTo(int index) {
-    if (index < 0 || index >= (int)g_forms.size()) return;
+    if (index < 0 || index >= (int)g_forms.size() || index == g_active) return;
+    ParkActiveToModel();
     for (size_t i = 0; i < g_forms.size(); i++) g_forms[i].parked = ((int)i != index);
     g_active = index;
     g_forms[index].parked = false;
+    SyncModelFromActive();
 }
 
 std::string ProjectDir() { return g_projectDir; }
@@ -82,6 +125,7 @@ void SetProjectDir(const std::string& d) { g_projectDir = d; }
 
 // --- tek dosya kayıt -------------------------------------------------------
 bool SaveProjectAs(const std::string& path) {
+    ParkActiveToModel();   // g_model → aktif form girdisi
     json::Value root = json::Value::MakeObj();
     SetS(root, "format", "imgod-project");
     root.Set("version", (double)4);
@@ -118,7 +162,7 @@ bool LoadProject(const std::string& path) {
         // belki tek-form .imgod (model.ToJson) — doğrudan yükle
         g_forms.clear();
         FormEntry f; f.name = "Form1"; f.parked = false;
-        if (f.model.FromJson(root)) { g_forms.push_back(std::move(f)); g_active = 0; return true; }
+        if (f.model.FromJson(root)) { g_forms.push_back(std::move(f)); g_active = 0; SyncModelFromActive(); return true; }
         return false;
     }
     g_forms.clear();
@@ -134,6 +178,7 @@ bool LoadProject(const std::string& path) {
     g_active = (int)root.Get(L"Active").AsNum(0);
     if (g_active < 0 || g_active >= (int)g_forms.size()) g_active = 0;
     g_forms[g_active].parked = false;
+    SyncModelFromActive();
     SetProjectDir(DirOfA(path));
     g_modelDirty = false;
     return true;
@@ -141,6 +186,7 @@ bool LoadProject(const std::string& path) {
 
 // --- klasör projesi (Forms.info + FormN.info) -------------------------------
 bool SaveFolderProject(const std::string& dir) {
+    ParkActiveToModel();   // g_model → aktif form girdisi
     if (!MkDirsA(dir)) return false;
     std::string infoPath = JoinPathA(dir, "Forms.info");
     json::Value root = json::Value::MakeObj();
@@ -184,6 +230,7 @@ bool LoadFolderProject(const std::string& infoPath) {
     g_active = (int)root.Get(L"Active").AsNum(0);
     if (g_active < 0 || g_active >= (int)g_forms.size()) g_active = 0;
     g_forms[g_active].parked = false;
+    SyncModelFromActive();
     SetProjectDir(dir);
     g_modelDirty = false;
     return true;

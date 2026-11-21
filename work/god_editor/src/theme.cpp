@@ -171,6 +171,19 @@ void Apply(int id) {
     }
 }
 
+// ---------------------------------------------------------------------------
+//  WYSIWYG üretim teması — canvas, formu üretilecek uygulamanın temasıyla çizer
+static std::vector<ImGuiStyle> s_styleStack;
+void PushProduction(int id) {
+    s_styleStack.push_back(ImGui::GetStyle());   // tüm stil yapısını yedekle
+    Apply(id);
+}
+void PopProduction() {
+    if (s_styleStack.empty()) return;
+    ImGui::GetStyle() = s_styleStack.back();      // editör temasını geri yükle
+    s_styleStack.pop_back();
+}
+
 std::string GenThemeApiCall(int id) {
     switch (id) {
     case TImGuiLight: return "ImGui::StyleColorsLight();";

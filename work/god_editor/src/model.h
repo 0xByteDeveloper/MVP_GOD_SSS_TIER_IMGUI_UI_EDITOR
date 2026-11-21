@@ -32,13 +32,36 @@ struct Ctrl {
 class Model {
 public:
     // Form (kök) özellikleri
-    std::map<std::string, std::string> formProps;   // Text, Name, ClientSize, Flags...
+    std::map<std::string, std::string> formProps;   // Text, Name, ClientSize, Flags, WindowBg...
     std::map<std::string, std::string> formEvents;  // Load → Form1_Load vb.
     std::vector<Ctrl*> ctrls;
     int formW = 430, formH = 460;
 
-    Ctrl* selected = nullptr;
+    // ---- çoklu seçim -------------------------------------------------------
+    // selList: seçili nesneler (SON eleman = birincil seçim). Boşsa form seçilidir.
+    std::vector<Ctrl*> selList;
+    Ctrl* selected = nullptr;        // birincil seçim (selList.back() ile senkron)
     bool formSelected = true;
+
+    bool  IsSelected(const Ctrl* c) const;
+    Ctrl* Primary() const { return selList.empty() ? nullptr : selList.back(); }
+    std::vector<Ctrl*> ValidSelection() const;          // var olan kontroller filtreli
+    void  SelectOnly(Ctrl* c);                            // tek seçim (c=null → form)
+    void  SetSelection(const std::vector<Ctrl*>& list);  // toplu seçim (rubber band)
+    void  ToggleSel(Ctrl* c);                             // Shift/Ctrl tık
+    void  AddSel(Ctrl* c);                                // seçime ekle
+    void  SelectForm();                                  // form seçimi (seçimi temizle)
+    void  SelectAll();                                    // Ctrl+A
+    void  SyncSelection();                                // silinen/adı değişen sonrası düzelt
+
+    // ---- pano (Ctrl+C/X/V — M2God davranışı) ------------------------------
+    // Kopyalanan nesneler JSON olarak tutulur; yapıştırılınca adlar TİP
+    // sayacıyla yeniden üretilir (denemebutton → button3 gibi).
+    std::string clipboardJson;                            // nesne JSON dizisi
+    bool  CopySelection();                                 // seçili + alt kontrolleri JSON'a al
+    bool  CutSelection();                                  // kopyala + sil
+    int   PasteClipboard(int dx, int dy);                  // yeni adlarla ekle (dönen: eklenen sayı)
+    int   pasteCount = 0;                                  // yapıştırma kademeli ofseti
 
     // --- parent-child yardımcıları --------------------------------------
     std::vector<Ctrl*> ChildrenOf(Ctrl* p) const;
@@ -60,6 +83,7 @@ public:
     std::string UniqueName(const std::string& type);
     Ctrl* Add(const std::string& type, int x, int y, Ctrl* parent = nullptr);
     void Delete(Ctrl* c);                 // alt kontrollerle birlikte
+    void DeleteList(const std::vector<Ctrl*>& list);   // çoklu silme (Ctrl+X/Del)
     Ctrl* Clone(Ctrl* src, int dx, int dy);
     Ctrl* FindByName(const std::string& name);
     void Rename(Ctrl* c, const std::string& newName);
@@ -79,6 +103,9 @@ private:
     std::map<std::string, int> nameCounters;
     std::string Snapshot() const;        // tüm modelin JSON'u
     void Restore(const std::string& js);
+    // pano içi derin klon yardımımcısı
+    Ctrl* PasteCtrlFromJson(const json::Value& v, const std::map<std::string, std::string>& nameMap,
+                             Ctrl* parentOverride, int dx, int dy);
 };
 
 extern Model g_model;

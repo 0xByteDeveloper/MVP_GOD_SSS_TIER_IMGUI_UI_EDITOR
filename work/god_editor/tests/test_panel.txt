@@ -1,0 +1,12 @@
+# PANEL (yeni araç): Panel ekle + İÇİNE yerleştirilen nesne parent=panel olur
+add Panel 40 40
+wait 30
+arm Button
+wait 5
+click 400 300
+wait 10
+set panel1 Rounding "6"
+set panel1 BgColor "#1A2030"
+wait 5
+save state_panel.imgod
+quit

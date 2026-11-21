@@ -1,0 +1,789 @@
+     1→// ============================================================================
+     2→//  ui_editor.cpp — IMGUI_GOD_SSSTIER editör kabuğu.
+     3→//  * Başlangıç ekranı: VS seç & bağlan | önceki tasarımı aç | VS'siz devam + motor bilgisi
+     4→//  * Ana kabuk: menü çubuğu + araç çubuğu + 4 panel (Kod Gezgini, Araç Kutusu,
+     5→//    Formlar, Özellikler/Olaylar) + canvas + durum çubuğu + sürüklenebilir ayraçlar
+     6→//  * Üretim diyaloğu: D3D sürümü seçimi (dx9/dx10/dx11/dx12/opengl3) + tema + hedef
+     7→// ============================================================================
+     8→#include "ui_editor.h"
+     9→#include "model.h"
+    10→#include "forms.h"
+    11→#include "catalog.h"
+    12→#include "theme.h"
+    13→#include "vsint.h"
+    14→#include "codegen.h"
+    15→#include "canvas.h"
+    16→#include <windows.h>
+    17→#include <commdlg.h>
+    18→#include "imgui_internal.h"
+    19→#include <cstdio>
+    20→#include <sstream>
+    21→
+    22→namespace ui_editor {
+    23→
+    24→bool g_showToolbox = true, g_showCodetree = true, g_showForms = true, g_showProps = true;
+    25→
+    26→static std::string s_status = "HAZIR";
+    27→static std::string s_selftestPath;
+    28→static std::string s_pendingOpen;
+    29→static bool s_genDialog = false;             // üretim diyaloğu açık
+    30→static bool s_aboutOpen = false;
+    31→static int s_editorTheme = theme::TImGuiDark;
+    32→
+    33→// ---- diyaloglar (comdlg — Wine altında da çalışır) ----
+    34→std::string OpenDlg(const char* title, const char* filter) {
+    35→    char file[MAX_PATH] = "";
+    36→    OPENFILENAMEA ofn = { sizeof(ofn) };
+    37→    ofn.hwndOwner = GetActiveWindow();
+    38→    ofn.lpstrFile = file;
+    39→    ofn.nMaxFile = MAX_PATH;
+    40→    ofn.lpstrTitle = title;
+    41→    ofn.lpstrFilter = filter;
+    42→    ofn.Flags = OFN_FILEMUSTEXIST | OFN_EXPLORER | OFN_NOCHANGEDIR;
+    43→    if (GetOpenFileNameA(&ofn)) return file;
+    44→    return "";
+    45→}
+    46→std::string SaveDlg(const char* title, const char* filter, const char* defExt) {
+    47→    char file[MAX_PATH] = "";
+    48→    OPENFILENAMEA ofn = { sizeof(ofn) };
+    49→    ofn.hwndOwner = GetActiveWindow();
+    50→    ofn.lpstrFile = file;
+    51→    ofn.nMaxFile = MAX_PATH;
+    52→    ofn.lpstrTitle = title;
+    53→    ofn.lpstrFilter = filter;
+    54→    ofn.lpstrDefExt = defExt;
+    55→    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_EXPLORER | OFN_NOCHANGEDIR;
+    56→    if (GetSaveFileNameA(&ofn)) return file;
+    57→    return "";
+    58→}
+    59→void StatusUpdate(const std::string& s) { s_status = s; }
+    60→void SetSelftest(const std::string& p) { s_selftestPath = p; }
+    61→void SetPendingOpen(const std::string& p) { s_pendingOpen = p; }
+    62→
+    63→bool ToolbarButton(const char* label, const char* desc, bool enabled) {
+    64→    ImGui::BeginDisabled(!enabled);
+    65→    bool c = ImGui::SmallButton(label);
+    66→    if (ImGui::IsItemHovered()) { ImGui::SetTooltip("%s", desc); StatusUpdate(desc); }
+    67→    ImGui::EndDisabled();
+    68→    return c;
+    69→}
+    70→
+    71→// ---------------------------------------------------------------------------
+    72→//  başlangıç ekranı — ÖNCE VS seçimi, sonra sıfır form (özgün akış)
+    73→struct WelcomeState {
+    74→    std::vector<vsint::VSInstance> insts;
+    75→    int sel = 0;
+    76→    bool scanned = false;
+    77→    bool connectFailed = false;
+    78→    std::string connectMsg;
+    79→    int editorBackendView = (int)EditorBackend::DX11;
+    80→};
+    81→static WelcomeState s_w;
+    82→
+    83→static void DrawWelcome(EditorState* es, ImGuiIO& io) {
+    84→    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f - 330, io.DisplaySize.y * 0.5f - 260));
+    85→    ImGui::SetNextWindowSize(ImVec2(660, 520));
+    86→    ImGui::Begin("IMGUI GOD SSS TIER — Ba\305\237lang\304\241\303\247", nullptr,
+    87→        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    88→    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(90, 220, 120, 255));
+    89→    ImGui::TextUnformatted("IMGUI GOD SSS TIER — UI Edit\303\266r ve Kod \303\234reticisi");
+    90→    ImGui::PopStyleColor();
+    91→    ImGui::TextUnformatted("VS2019 C++ ile derlenince edit\303\266rdeki formu AYNEN g\303\266steren ImGui projeleri \303\274retir.");
+    92→    ImGui::Separator();
+    93→
+    94→    ImGui::TextUnformatted("1) \303\207al\304\261\305\237an Visual Studio se\303\247in ve ba\304\237lan\304\261n:");
+    95→    if (!s_w.scanned) { s_w.insts = vsint::Enumerate(); s_w.scanned = true; }
+    96→    ImGui::SetNextItemWidth(-1);
+    97→    if (!s_w.insts.empty()) {
+    98→        // satır listesi (native combo)
+    99→        const char* names[64];
+   100→        for (size_t i = 0; i < s_w.insts.size() && i < 64; i++) {
+   101→            static char bufs[64][160];
+   102→            snprintf(bufs[i], sizeof bufs[i], "PID %lu — %s", s_w.insts[i].pid,
+   103→                     s_w.insts[i].title.c_str());
+   104→            names[i] = bufs[i];
+   105→        }
+   106→        ImGui::ListBox("##vs", &s_w.sel, names, (int)(s_w.insts.size() < 64 ? s_w.insts.size() : 64), 6);
+   107→    } else {
+   108→        ImGui::TextDisabled("(Çalışan Visual Studio bulunamadı — devenv.exe)");
+   109→        ImGui::TextWrapped("Wine / Linux altında VS yoktur: aşağıdaki seçeneklerle devam edebilirsiniz.");
+   110→    }
+   111→    if (ImGui::Button("Yenile")) { s_w.insts = vsint::Enumerate(); s_w.sel = 0; }
+   112→    ImGui::SameLine();
+   113→    ImGui::BeginDisabled(s_w.insts.empty() || s_w.sel >= (int)s_w.insts.size());
+   114→    if (ImGui::Button("VS'ye Ba\304\237lan")) {
+   115→        auto& inst = s_w.insts[s_w.sel];
+   116→        if (!inst.solutionPath.empty() && vsint::Connect(inst.solutionPath, "")) {
+   117→            s_status = "VS ba\304\237land\304\261: " + inst.solutionPath;
+   118→            g_modelDirty = true;
+   119→            es->welcome = 0;   // edit\303\266re ge\303\247
+   120→        } else {
+   121→            // \303\247\303\266z\303\274m yolu diskte bulunamad\304\261 — klas\303\266r taramas\304\261 iste
+   122→            s_w.connectMsg = "\303\207\303\266z\303\274m .sln yolu bulunamad\304\261 — dosya se\303\247im diyalo\304\237u a\303\247\304\261l\304\261yor.";
+   123→            std::string sln = OpenDlg("Visual Studio \303\207\303\266z\303\274m\303\274 (.sln) se\303\247", "\303\207\303\266z\303\274m\303\274 dosyas\304\261\0*.sln\0T\303\274m dosyalar\0*.*\0");
+   124→            if (!sln.empty() && vsint::Connect(sln, "")) {
+   125→                s_status = "VS ba\304\237land\304\261: " + sln;
+   126→                vsint::OpenSolution(sln);   // Windows'ta VS'yi a\303\247ar
+   127→                es->welcome = 0;
+   128→            } else s_w.connectMsg = "Ba\304\237lan\304\261lamad\304\261 — VS'siz devam edin.";
+   129→        }
+   130→    }
+   131→    ImGui::EndDisabled();
+   132→    ImGui::TextWrapped("Ba\304\237lan\304\261nca \303\247\303\266z\303\274mdeki proje klas\303\266r\303\274ne \303\274retim yap\304\261l\304\261r ve VS penceresi \303\266ne getirilir.");
+   133→    if (!s_w.connectMsg.empty()) {
+   134→        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 120, 90, 255));
+   135→        ImGui::TextWrapped("%s", s_w.connectMsg.c_str());
+   136→        ImGui::PopStyleColor();
+   137→    }
+   138→    ImGui::Separator();
+   139→
+   140→    ImGui::TextUnformatted("2) \303\226nceki tasar\304\261m\304\261 a\303\247:");
+   141→    if (ImGui::Button("A\303\247 (.imgod / Forms.info)")) {
+   142→        std::string p = OpenDlg("Proje a\303\247", "IMGUI GOD projesi\0*.imgod\0Forms.info\0Forms.info\0T\303\274m dosyalar\0*.*\0");
+   143→        if (!p.empty() && forms::LoadProject(p)) {
+   144→            s_status = "A\303\247\304\261ld\304\261: " + p;
+   145→            es->welcome = 0;
+   146→        } else if (!p.empty()) s_status = "A\303\247\304\261lamad\304\261: " + p;
+   147→    }
+   148→    ImGui::Separator();
+   149→
+   150→    ImGui::TextUnformatted("3) VEYA VS'siz devam:");
+   151→    if (ImGui::Button("VS'siz bo\305\237 formla devam et", ImVec2(240, 34))) {
+   152→        es->welcome = 0;
+   153→        s_status = "VS'siz mod — bo\305\237 Form1";
+   154→    }
+   155→    ImGui::Separator();
+   156→    ImGui::Text("Edit\303\266r grafik motoru: %s   (tam s\303\274r\303\274m seti \303\274retimde: DX9/DX10/DX11/DX12/OpenGL3)",
+   157→                BackendNameA((EditorBackend)es->editorBackend));
+   158→    ImGui::End();
+   159→    // diyalog mesajları metinleri düzgün yaz: yukarıda escape kullanıldı — karakter sorunu yok (utf-8 kaynak)
+   160→}
+   161→
+   162→// ---------------------------------------------------------------------------
+   163→//  yardımcı: dosya kaydet/aç akışları
+   164→static void DoNewProject() {
+   165→    forms::Init();
+   166→    g_modelDirty = false;
+   167→    s_status = "Yeni proje — Form1";
+   168→}
+   169→static void DoOpen() {
+   170→    std::string p = OpenDlg("Proje a\303\247", "IMGUI GOD projesi\0*.imgod\0Forms.info\0Forms.info\0T\303\274m dosyalar\0*.*\0");
+   171→    if (!p.empty() && forms::LoadProject(p)) s_status = "A\303\247\304\261ld\304\261: " + p;
+   172→    else if (!p.empty()) s_status = "A\303\247\304\261lamad\304\261";
+   173→}
+   174→static void DoSave(bool saveAs) {
+   175→    if (saveAs) {
+   176→        std::string p = SaveDlg("Proje kaydet", "IMGUI GOD projesi\0*.imgod\0", "imgod");
+   177→        if (p.empty()) return;
+   178→        if (forms::SaveProjectAs(p)) s_status = "Kaydedildi: " + p;
+   179→        else s_status = "Kaydedilemedi";
+   180→        return;
+   181→    }
+   182→    if (!forms::ProjectDir().empty()) {
+   183→        if (forms::SaveFolderProject(forms::ProjectDir())) s_status = "Kaydedildi: " + forms::ProjectDir();
+   184→        else s_status = "Kaydedilemedi";
+   185→    } else DoSave(true);
+   186→}
+   187→static void DoSaveFolder() {
+   188→    std::string info = SaveDlg("Klas\303\266r projesi kaydet (Forms.info)", "Forms.info\0Forms.info\0", "info");
+   189→    if (info.empty()) return;
+   190→    if (forms::SaveFolderProject(DirOfA(info))) s_status = "Klas\303\266r projesi: " + DirOfA(info);
+   191→    else s_status = "Kaydedilemedi";
+   192→}
+   193→
+   194→// ---------------------------------------------------------------------------
+   195→//  kod üretim diyaloğu — D3D SÜRÜMÜ SEÇİMİ (kullanıcı talebi)
+   196→static void DrawGenDialog() {
+   197→    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f - 320, ImGui::GetIO().DisplaySize.y * 0.5f - 200));
+   198→    ImGui::SetNextWindowSize(ImVec2(640, 400));
+   199→    ImGui::Begin("Kod \303\234ret — Ayarlar", &s_genDialog, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+   200→    ImGui::TextUnformatted("D3D / Grafik S\303\274r\303\274m\303\274 (derlenecek uygulaman\304\261n motoru):");
+   201→    const char* bes[] = { "DirectX 11 (varsay\304\261lan)", "DirectX 9", "DirectX 10", "DirectX 12", "OpenGL 3" };
+   202→    ImGui::SetNextItemWidth(300);
+   203→    ImGui::Combo("##backend", &codegen::g_settings.backend, bes, IM_ARRAYSIZE(bes));
+   204→    ImGui::TextUnformatted("Tema (derlenecek uygulama ba\305\237lang\304\261\303\247 temas\304\261):");
+   205→    {
+   206→        const char* ths[6];
+   207→        for (auto& t : theme::List()) ths[t.id] = t.name;
+   208→        ImGui::SetNextItemWidth(300);
+   209→        ImGui::Combo("##theme", &codegen::g_settings.themeId, ths, 6);
+   210→    }
+   211→    ImGui::Checkbox("VS2019 \303\247\303\266z\303\274m\303\274 \303\274ret (.sln + .vcxproj v142)", &codegen::g_settings.genVS2019);
+   212→    ImGui::Checkbox("MinGW derleme beti\304\237i (build_mingw.sh)", &codegen::g_settings.genMinGW);
+   213→    ImGui::Checkbox("x64 hedefi (x86 da dahil edilir)", &codegen::g_settings.x64);
+   214→    char pn[128];
+   215→    snprintf(pn, sizeof pn, "%s", codegen::g_settings.projectName.c_str());
+   216→    ImGui::SetNextItemWidth(300);
+   217→    if (ImGui::InputText("Proje ad\304\261", pn, sizeof pn)) codegen::g_settings.projectName = pn;
+   218→    ImGui::Separator();
+   219→    ImGui::TextWrapped("\304\260mge klas\303\266r\303\274: ImGui SDK kopyalan\304\261r, her form <Ad>.cpp/.h \303\274retilir, olay i\305\237leyicileri bo\305\237 g\303\266vdeyle olu\305\237turulur.");
+   220→    if (ImGui::Button("\303\234ret (klas\303\266r se\303\247)", ImVec2(180, 36))) {
+   221→        std::string p = SaveDlg("\303\234retim klas\303\266r\303\274", "Klas\303\266r se\303\247im\0\0", "");
+   222→        if (!p.empty()) {
+   223→            p = DirOfA(p);   // bir dosya seçilirse klasörüne
+   224→            if (p.empty()) p = ".";
+   225→            if (codegen::EmitProject(p)) {
+   226→                s_status = "\303\234retildi: " + p + " (" + std::string(BackendNameA((EditorBackend)codegen::g_settings.backend)) + ")";
+   227→                // VS bağlıysa çözümü aç
+   228→                if (vsint::IsConnected()) vsint::OpenSolution(vsint::ConnectedSln());
+   229→            } else s_status = "\303\234retilemedi: " + p;
+   230→        }
+   231→        s_genDialog = false;
+   232→    }
+   233→    ImGui::SameLine();
+   234→    if (ImGui::Button("\304\260ptal")) s_genDialog = false;
+   235→    ImGui::End();
+   236→}
+   237→
+   238→// ---------------------------------------------------------------------------
+   239→//  paneller
+   240→static void DrawToolbox(ImVec2 min, ImVec2 max) {
+   241→    ImGui::SetNextWindowPos(min);
+   242→    ImGui::SetNextWindowSize(ImVec2(max.x - min.x, max.y - min.y));
+   243→    ImGui::Begin("Ara\303\247 Kutusu", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+   244→    static char search[128] = "";
+   245→    ImGui::TextUnformatted("Ara (kategori/nesne):");
+   246→    ImGui::SetNextItemWidth(-1);
+   247→    ImGui::InputText("##tbs", search, sizeof search);
+   248→    ImGui::Separator();
+   249→    for (auto& cat : g_catalog.categories) {
+   250→        // arama filtresi
+   251→        bool show = search[0] == 0;
+   252→        for (auto& e : g_catalog.catElements[cat]) {
+   253→            std::wstring low = LowerW(Utf8ToWideStr(e));
+   254→            std::wstring sw = LowerW(Utf8ToWideStr(std::string(search)));
+   255→            if (low.find(sw) != std::wstring::npos || cat.find(search) != std::string::npos) show = true;
+   256→        }
+   257→        if (!show) continue;
+   258→        ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+   259→        if (ImGui::TreeNodeEx(cat.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+   260→            for (auto& e : g_catalog.catElements[cat]) {
+   261→                ImGui::PushID(e.c_str());
+   262→                // tık = YERLEŞTİRME MODU (arm — ESC iptal); çift tık = aktif forma direkt ekle
+   263→                if (ImGui::Selectable(e.c_str(), canvas::IsArmed() && canvas::g_armTool == e,
+   264→                                      ImGuiSelectableFlags_AllowDoubleClick)) {
+   265→                    if (ImGui::IsMouseDoubleClicked(0)) {
+   266→                        canvas::ArmTool(e);
+   267→                        canvas::AddArmedToForm();
+   268→                        canvas::CancelArm();
+   269→                        s_status = "Eklendi: " + e + " (aktif forma)";
+   270→                    } else {
+   271→                        canvas::ArmTool(e);
+   272→                        s_status = "Yerle\305\237tir: " + e + " — forma t\304\261kla (ESC iptal)";
+   273→                    }
+   274→                }
+   275→                if (ImGui::IsItemHovered()) {
+   276→                    const ElementDef* d = g_catalog.Find(e);
+   277→                    if (d) ImGui::SetTooltip("%s\n%s\nT\304\261kla: yerle\305\237tir · \303\247ift t\304\261kla: forma ekle",
+   278→                                             d->cppApi.c_str(), d->kind.c_str());
+   279→                }
+   280→                ImGui::PopID();
+   281→            }
+   282→            ImGui::TreePop();
+   283→        }
+   284→    }
+   285→    ImGui::End();
+   286→}
+   287→
+   288→// kod gezgini satırı — SAĞLAM seçim (Selectable) + bağlam menüsü + hiyerarşi
+   289→static void DrawCtrlRow(Ctrl* c, int formIdx, int depth) {
+   290→    ImGui::PushID(c->name.c_str());
+   291→    ImGui::PushID(depth);
+   292→    std::string line = c->name + "  :  " + c->type;
+   293→    bool sel = g_model.IsSelected(c);
+   294→    bool container = IsContainerType(c->type) && !c->nonVisual && c->type != "Menu";
+   295→    if (container) {
+   296→        ImGuiTreeNodeFlags fl = ImGuiTreeNodeFlags_DefaultOpen | (sel ? ImGuiTreeNodeFlags_Selected : 0);
+   297→        bool open = ImGui::TreeNodeEx(line.c_str(), fl);
+   298→        if (ImGui::IsItemClicked(0)) {
+   299→            if (formIdx != forms::ActiveIndex()) forms::SwitchTo(formIdx);
+   300→            canvas::Select(c, ImGui::GetIO().KeyShift || ImGui::GetIO().KeyCtrl);
+   301→        }
+   302→        if (ImGui::IsItemHovered()) ImGui::SetTooltip("T\304\261kla: se\303\247 · a\303\247/kapa: \303\247ocuklar");
+   303→        if (open) {
+   304→            for (Ctrl* ch : g_model.ChildrenOf(c)) DrawCtrlRow(ch, formIdx, depth + 1);
+   305→            ImGui::TreePop();
+   306→        }
+   307→    } else {
+   308→        if (ImGui::Selectable(line.c_str(), sel)) {
+   309→            if (formIdx != forms::ActiveIndex()) forms::SwitchTo(formIdx);
+   310→            canvas::Select(c, ImGui::GetIO().KeyShift || ImGui::GetIO().KeyCtrl);
+   311→        }
+   312→        if (ImGui::IsItemHovered()) ImGui::SetTooltip("T\304\261kla: se\303\247");
+   313→    }
+   314→    // bağlam menüsü (sağ tık)
+   315→    if (ImGui::BeginPopupContextItem("##ctx")) {
+   316→        if (ImGui::MenuItem("Se\303\247")) canvas::Select(c, false);
+   317→        ImGui::Separator();
+   318→        if (ImGui::MenuItem("Kopyala (Ctrl+C)", nullptr, false, g_model.IsSelected(c))) g_model.CopySelection();
+   319→        if (ImGui::MenuItem("Kes (Ctrl+X)", nullptr, false, g_model.IsSelected(c))) { g_model.PushUndo(); g_model.CutSelection(); }
+   320→        ImGui::Separator();
+   321→        if (ImGui::MenuItem("\303\226ne Getir")) g_model.BringToFront(c);
+   322→        if (ImGui::MenuItem("Arkaya G\303\266nder")) g_model.SendToBack(c);
+   323→        ImGui::Separator();
+   324→        if (ImGui::MenuItem("Sil (Del)")) { g_model.PushUndo(); g_model.SelectOnly(c); g_model.DeleteList(g_model.ValidSelection()); }
+   325→        ImGui::EndPopup();
+   326→    }
+   327→    ImGui::PopID();
+   328→    ImGui::PopID();
+   329→}
+   330→
+   331→static void DrawCodetree(ImVec2 min, ImVec2 max) {
+   332→    ImGui::SetNextWindowPos(min);
+   333→    ImGui::SetNextWindowSize(ImVec2(max.x - min.x, max.y - min.y));
+   334→    ImGui::Begin("Kod Gezgini", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+   335→    for (size_t i = 0; i < forms::Count(); i++) {
+   336→        forms::FormEntry* f = forms::At(i);
+   337→        ImGui::PushID((int)i);
+   338→        ImGuiTreeNodeFlags fl = ImGuiTreeNodeFlags_DefaultOpen | ((int)i == forms::ActiveIndex() ? ImGuiTreeNodeFlags_Selected : 0);
+   339→        bool open = ImGui::TreeNodeEx(f->name.c_str(), fl);
+   340→        if (ImGui::IsItemClicked(0)) {
+   341→            forms::SwitchTo((int)i);
+   342→            g_model.SelectForm();      // forma tıkla = form seçimi
+   343→        }
+   344→        if (open) {
+   345→            // objeler (hiyerarşik: konteyner çocukları ağaçta)
+   346→            // AKTİF form → g_model (düzenleme yüzeyi); park edilmiş → girdi modeli
+   347→            const Model& fm = ((int)i == forms::ActiveIndex()) ? g_model : f->model;
+   348→            for (Ctrl* c : fm.ctrls)
+   349→                if (!c->parent) DrawCtrlRow(c, (int)i, 0);
+   350→            // form olayları
+   351→            if (!f->model.formEvents.empty()) {
+   352→                ImGui::Indent(18);
+   353→                for (auto& ev : f->model.formEvents)
+   354→                    ImGui::BulletText("%s \u2192 %s", (f->name + "_" + ev.first).c_str(), ev.second.c_str());
+   355→                ImGui::Unindent(18);
+   356→            }
+   357→            ImGui::TreePop();
+   358→        }
+   359→        ImGui::PopID();
+   360→    }
+   361→    ImGui::End();
+   362→}
+   363→
+   364→static void DrawFormList(ImVec2 min, ImVec2 max) {
+   365→    ImGui::SetNextWindowPos(min);
+   366→    ImGui::SetNextWindowSize(ImVec2(max.x - min.x, max.y - min.y));
+   367→    ImGui::Begin("Formlar", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+   368→    for (size_t i = 0; i < forms::Count(); i++) {
+   369→        forms::FormEntry* f = forms::At(i);
+   370→        ImGui::PushID((int)i);
+   371→        size_t nObj = ((int)i == forms::ActiveIndex()) ? g_model.ctrls.size() : f->model.ctrls.size();
+   372→        std::string line = f->name + "   (" + std::to_string(nObj) + " nesne)";
+   373→        if (ImGui::Selectable(line.c_str(), (int)i == forms::ActiveIndex())) forms::SwitchTo((int)i);
+   374→        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+   375→            static char nb[128];
+   376→            snprintf(nb, sizeof nb, "%s", f->name.c_str());
+   377→            ImGui::OpenPopup("Yeniden Adland\304\261r");
+   378→        }
+   379→        ImGui::PopID();
+   380→    }
+   381→    ImGui::Separator();
+   382→    if (ImGui::Button("+ Yeni Form")) { forms::NewForm(); s_status = "Yeni form eklendi"; }
+   383→    ImGui::SameLine();
+   384→    ImGui::BeginDisabled(forms::Count() <= 1);
+   385→    if (ImGui::Button("Sil")) { forms::DeleteAt(forms::ActiveIndex()); }
+   386→    ImGui::EndDisabled();
+   387→    ImGui::SameLine();
+   388→    if (ImGui::Button("Yen. Ad")) ImGui::OpenPopup("Yeniden Adland\304\261r");
+   389→    if (ImGui::BeginPopup("Yeniden Adland\304\261r")) {
+   390→        static char nb[128];
+   391→        snprintf(nb, sizeof nb, "%s", forms::Active()->name.c_str());
+   392→        if (ImGui::InputText("Yeni ad", nb, sizeof nb)) {}
+   393→        if (ImGui::Button("Tamam")) { forms::RenameActive(nb); ImGui::CloseCurrentPopup(); }
+   394→        ImGui::SameLine();
+   395→        if (ImGui::Button("\304\260ptal")) ImGui::CloseCurrentPopup();
+   396→        ImGui::EndPopup();
+   397→    }
+   398→    ImGui::End();
+   399→}
+   400→
+   401→void DrawPropsPanel(ImVec2 min, ImVec2 max);   // props.cpp'de
+   402→
+   403→// ---------------------------------------------------------------------------
+   404→//  klavye kısayolları
+   405→static void HandleShortcuts(ImGuiIO& io) {
+   406→    // metin girişi odaktaysa kısayolları yeme (panellerdeki InputText)
+   407→    if (io.WantTextInput) return;
+   408→    if (io.KeyCtrl) {
+   409→        if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) { g_model.Undo(); s_status = "Geri al\304\261nd\304\261"; }
+   410→        else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) { g_model.Redo(); s_status = "Yinelendi"; }
+   411→        else if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+   412→            // Ctrl+C — seçili nesneleri kopyala (alt kontrollerle birlikte)
+   413→            if (g_model.CopySelection()) {
+   414→                size_t n = g_model.selList.size();
+   415→                s_status = "Kopyaland\304\261: " + std::to_string(n) + " nesne (Ctrl+V ile yap\304\261\305\237t\304\261r)";
+   416→            } else s_status = "Kopyalanacak nesne se\303\247ili de\304\237il";
+   417→        }
+   418→        else if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+   419→            // Ctrl+X — kes
+   420→            if (!g_model.selList.empty()) {
+   421→                g_model.PushUndo();
+   422→                size_t n = g_model.selList.size();
+   423→                if (g_model.CutSelection()) s_status = "Kesildi: " + std::to_string(n) + " nesne";
+   424→            }
+   425→        }
+   426→        else if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+   427→            // Ctrl+V — yapıştır (yeni adlar TİP sayacıyla: denemebutton → button3)
+   428→            if (!g_model.clipboardJson.empty()) {
+   429→                g_model.PushUndo();
+   430→                int n = g_model.PasteClipboard(GRID_SIZE, GRID_SIZE);
+   431→                s_status = "Yap\304\261\305\237t\304\261r\304\261ld\304\261: " + std::to_string(n) + " nesne (yeni adlarla)";
+   432→            }
+   433→        }
+   434→        else if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+   435→            // Ctrl+A — tümünü seç
+   436→            g_model.SelectAll();
+   437→            s_status = "T\303\274m\303\274 se\303\247ildi: " + std::to_string(g_model.selList.size()) + " nesne";
+   438→        }
+   439→        else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) DoSave(false);
+   440→        else if (ImGui::IsKeyPressed(ImGuiKey_O, false)) DoOpen();
+   441→        else if (ImGui::IsKeyPressed(ImGuiKey_N, false)) DoNewProject();
+   442→    } else {
+   443→        if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) s_genDialog = true;
+   444→        else if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) g_gridVisible = !g_gridVisible;
+   445→        else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !g_model.selList.empty()) {
+   446→            // Del — seçili NESNELERİ sil (form seçiliyken formu silmez)
+   447→            g_model.PushUndo();
+   448→            size_t n = g_model.selList.size();
+   449→            g_model.DeleteList(g_model.ValidSelection());
+   450→            s_status = "Silindi: " + std::to_string(n) + " nesne";
+   451→        }
+   452→        else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+   453→            if (canvas::IsArmed()) { canvas::CancelArm(); s_status = "Yerle\305\237tirme iptal edildi"; }
+   454→            else { g_model.SelectForm(); s_status = "Se\303\247im temizlendi"; }
+   455→        }
+   456→        else if (!g_model.selList.empty()) {
+   457→            // ok tuşları: İnce ayar (Shift = ızgara adımı) — seçili GRUBU taşı
+   458→            int step = io.KeyShift ? GRID_SIZE : 1;
+   459→            int dx = 0, dy = 0;
+   460→            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) dx = -step;
+   461→            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) dx = step;
+   462→            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) dy = -step;
+   463→            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) dy = step;
+   464→            if (dx || dy) {
+   465→                for (Ctrl* c : g_model.ValidSelection()) { c->x += dx; c->y += dy; }
+   466→                g_modelDirty = true;
+   467→            }
+   468→        }
+   469→    }
+   470→}
+   471→
+   472→// ---------------------------------------------------------------------------
+   473→//  selftest otomasyonu — Wine altında bağımsız test için
+   474→//  Betik satırları:  add <tip> <x> <y> ; select <isim> ; set <isim> <prop> <değer>
+   475→//  form <x> <y> ; newform ; save <yol> ; gen <yol> ; quit ; wait <kare>
+   476→static int s_selftestFrame = 0;
+   477→static std::vector<std::string> s_selftestLines;
+   478→static bool s_selftestActive = false;
+   479→static int s_selftestWaitUntil = -1;
+   480→// olay enjeksiyon kuyruğu (karelere yayılmış mesajlar)
+   481→struct InjectedMsg { int atFrame; UINT msg; WPARAM wp; LPARAM lp; };
+   482→static std::vector<InjectedMsg> s_inject;
+   483→static void Inject(int framesLater, UINT msg, WPARAM wp, LPARAM lp) {
+   484→    InjectedMsg m; m.atFrame = s_selftestFrame + framesLater; m.msg = msg; m.wp = wp; m.lp = lp;
+   485→    s_inject.push_back(m);
+   486→}
+   487→static void DrainInject() {
+   488→    HWND hwnd = (HWND)g_mainHwnd;
+   489→    if (!hwnd) return;
+   490→    for (size_t i = 0; i < s_inject.size(); ) {
+   491→        if (s_inject[i].atFrame <= s_selftestFrame) {
+   492→            PostMessageA(hwnd, s_inject[i].msg, s_inject[i].wp, s_inject[i].lp);
+   493→            s_inject.erase(s_inject.begin() + i);
+   494→        } else i++;
+   495→    }
+   496→}
+   497→static void SelftestStep() {
+   498→    if (!s_selftestActive) return;
+   499→    DrainInject();
+   500→    if (s_selftestWaitUntil >= 0) {
+   501→        if (s_selftestFrame < s_selftestWaitUntil) return;
+   502→        s_selftestWaitUntil = -1;
+   503→    }
+   504→    while (!s_selftestLines.empty()) {
+   505→        std::string line = TrimA(s_selftestLines.front());
+   506→        s_selftestLines.erase(s_selftestLines.begin());
+   507→        if (line.empty() || line[0] == '#') continue;
+   508→        std::istringstream iss(line);
+   509→        std::string cmd; iss >> cmd;
+   510→        if (cmd == "add") {
+   511→            std::string type; int x, y;
+   512→            iss >> type >> x >> y;
+   513→            Ctrl* c = g_model.Add(type, x, y, nullptr);
+   514→            s_status = c ? ("Eklendi: " + c->name) : "Ekleme hatas\304\261";
+   515→        } else if (cmd == "select") {
+   516→            std::string n; iss >> n;
+   517→            canvas::Select(g_model.FindByName(n));
+   518→        } else if (cmd == "selectadd") {
+   519→            std::string n; iss >> n;
+   520→            Ctrl* c = g_model.FindByName(n);
+   521→            if (c) g_model.AddSel(c);
+   522→        } else if (cmd == "set") {
+   523→            std::string n, p; iss >> n >> p;
+   524→            std::string rest; std::getline(iss, rest);
+   525→            rest = TrimA(rest);
+   526→            // tırnak içi değeri soy: "#D25410" → #D25410
+   527→            if (rest.size() >= 2 && (rest.front() == '"' || rest.front() == '\'') && rest.back() == rest.front())
+   528→                rest = rest.substr(1, rest.size() - 2);
+   529→            Ctrl* c = g_model.FindByName(n);
+   530→            if (c) {
+   531→                if (p == "Name") g_model.Rename(c, rest);
+   532→                else c->props[p] = rest;
+   533→            }
+   534→        } else if (cmd == "form") { iss >> g_model.formW >> g_model.formH; g_model.formProps["ClientSize"] = std::to_string(g_model.formW) + ", " + std::to_string(g_model.formH); }
+   535→        else if (cmd == "newform") { forms::NewForm(); }
+   536→        else if (cmd == "save") { std::string p; std::getline(iss, p); p = TrimA(p); forms::SaveProjectAs(p); }
+   537→        else if (cmd == "savefolder") { std::string p; std::getline(iss, p); p = TrimA(p); forms::SaveFolderProject(p); }
+   538→        else if (cmd == "gen") { std::string p; std::getline(iss, p); p = TrimA(p); codegen::EmitProject(p); }
+   539→        else if (cmd == "theme") { int t; iss >> t; theme::Apply(t); }
+   540→        else if (cmd == "genbackend") { int b; iss >> b; codegen::g_settings.backend = b; }
+   541→        else if (cmd == "projname") { std::string n; iss >> n; codegen::g_settings.projectName = n; }
+   542→        else if (cmd == "wait") { int k; iss >> k; s_selftestWaitUntil = s_selftestFrame + k; return; }
+   543→        else if (cmd == "arm") { std::string t; iss >> t; canvas::ArmTool(t); s_status = "ARM: " + t; }
+   544→        else if (cmd == "click") {
+   545→            // gerçek tıklama enjeksiyonu (ImGui Win32 backend'in işlediği WM mesajları)
+   546→            int x, y; iss >> x >> y;
+   547→            HWND hwnd = (HWND)g_mainHwnd;
+   548→            if (hwnd) {
+   549→                PostMessageA(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+   550→                PostMessageA(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+   551→                PostMessageA(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+   552→                s_status = "click " + std::to_string(x) + "," + std::to_string(y);
+   553→            }
+   554→        }
+   555→        else if (cmd == "dblclick") {
+   556→            int x, y; iss >> x >> y;
+   557→            HWND hwnd = (HWND)g_mainHwnd;
+   558→            if (hwnd) {
+   559→                PostMessageA(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+   560→                PostMessageA(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+   561→                PostMessageA(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+   562→                PostMessageA(hwnd, WM_LBUTTONDBLCLK, MK_LBUTTON, MAKELPARAM(x, y));
+   563→                PostMessageA(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+   564→            }
+   565→        }
+   566→        else if (cmd == "drag") {
+   567→            // rubber band / nesne taşıma sürüklemesi — MESAJLAR KARELERE YAYILIR
+   568→            // (tek karede down+up = tık olarak birleşir; sürükleme = ayrı kareler)
+   569→            int x1, y1, x2, y2; iss >> x1 >> y1 >> x2 >> y2;
+   570→            HWND hwnd = (HWND)g_mainHwnd;
+   571→            if (hwnd) {
+   572→                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(x1, y1));
+   573→                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x1, y1));
+   574→                Inject(1, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + (x2 - x1) / 3, y1 + (y2 - y1) / 3));
+   575→                Inject(2, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + 2 * (x2 - x1) / 3, y1 + 2 * (y2 - y1) / 3));
+   576→                Inject(3, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x2, y2));
+   577→                Inject(4, WM_LBUTTONUP, 0, MAKELPARAM(x2, y2));
+   578→            }
+   579→        }
+   580→        else if (cmd == "key") {
+   581→            // key <ad> [ctrl] — ad: a-z, del, esc, left/right/up/down, enter, f5, f6
+   582→            std::string k; int ctrl = 0; iss >> k >> ctrl;
+   583→            UINT vk = 0;
+   584→            if (k.size() == 1 && k[0] >= 'a' && k[0] <= 'z') vk = (UINT)(k[0] - 'a' + 'A');
+   585→            else if (k == "del" || k == "delete") vk = VK_DELETE;
+   586→            else if (k == "esc" || k == "escape") vk = VK_ESCAPE;
+   587→            else if (k == "left") vk = VK_LEFT;
+   588→            else if (k == "right") vk = VK_RIGHT;
+   589→            else if (k == "up") vk = VK_UP;
+   590→            else if (k == "down") vk = VK_DOWN;
+   591→            else if (k == "enter") vk = VK_RETURN;
+   592→            else if (k == "f5") vk = VK_F5;
+   593→            else if (k == "f6") vk = VK_F6;
+   594→            HWND hwnd = (HWND)g_mainHwnd;
+   595→            if (hwnd && vk) {
+   596→                if (ctrl) { PostMessageA(hwnd, WM_KEYDOWN, VK_CONTROL, 0x1D0001); }
+   597→                PostMessageA(hwnd, WM_KEYDOWN, vk, 0);
+   598→                PostMessageA(hwnd, WM_KEYUP, vk, 0);
+   599→                if (ctrl) { PostMessageA(hwnd, WM_KEYUP, VK_CONTROL, 0x1D0001); }
+   600→            }
+   601→        }
+   602→        else if (cmd == "paste") { g_model.PasteClipboard(GRID_SIZE, GRID_SIZE); }
+   603→        else if (cmd == "copy") { g_model.CopySelection(); }
+   604→        else if (cmd == "cut") { g_model.CutSelection(); }
+   605→        else if (cmd == "selectall") { g_model.SelectAll(); }
+   606→        else if (cmd == "selcount") {
+   607→            // seçim sayısını status'a yaz — test doğrulaması
+   608→            s_status = "SEL:" + std::to_string(g_model.selList.size()) +
+   609→                       " CLIP:" + std::to_string(!g_model.clipboardJson.empty());
+   610→        }
+   611→        else if (cmd == "quit") { PostQuitMessage(0); s_selftestActive = false; return; }
+   612→    }
+   613→    s_selftestActive = false;
+   614→}
+   615→
+   616→// ---------------------------------------------------------------------------
+   617→//  ana çizim
+   618→void Draw(EditorState* es, ImGuiIO& io) {
+   619→    // selftest yükle
+   620→    if (!s_selftestPath.empty() && !s_selftestActive && s_selftestLines.empty()) {
+   621→        std::string txt;
+   622→        if (ReadFileTextA(s_selftestPath, txt)) {
+   623→            std::istringstream iss(txt);
+   624→            std::string l;
+   625→            while (std::getline(iss, l)) s_selftestLines.push_back(l);
+   626→            s_selftestActive = true;
+   627→            g_statusText = "SELFTEST AKT\304\260F";
+   628→        }
+   629→        s_selftestPath.clear();
+   630→    }
+   631→    // pending open
+   632→    if (!s_pendingOpen.empty()) {
+   633→        if (forms::LoadProject(s_pendingOpen)) es->welcome = 0;
+   634→        s_pendingOpen.clear();
+   635→    }
+   636→
+   637→    if (es && es->welcome) { DrawWelcome(es, io); return; }
+   638→
+   639→    SelftestStep();
+   640→    s_selftestFrame++;
+   641→
+   642→    // ---- menü çubuğu ----
+   643→    if (ImGui::BeginMainMenuBar()) {
+   644→        if (ImGui::BeginMenu("Dosya")) {
+   645→            if (ImGui::MenuItem("Yeni Proje", "Ctrl+N")) DoNewProject();
+   646→            if (ImGui::MenuItem("A\303\247...", "Ctrl+O")) DoOpen();
+   647→            if (ImGui::MenuItem("Kaydet", "Ctrl+S")) DoSave(false);
+   648→            if (ImGui::MenuItem("Farkl\304\261 Kaydet...")) DoSave(true);
+   649→            if (ImGui::MenuItem("Klas\303\266r Projesi Kaydet (Forms.info)")) DoSaveFolder();
+   650→            ImGui::Separator();
+   651→            if (ImGui::MenuItem("\303\207\304\261k\305\237\304\261\305\237")) PostQuitMessage(0);
+   652→            ImGui::EndMenu();
+   653→        }
+   654→        if (ImGui::BeginMenu("D\303\274zen")) {
+   655→            ImGui::BeginDisabled(!g_model.CanUndo());
+   656→            if (ImGui::MenuItem("Geri Al", "Ctrl+Z")) g_model.Undo();
+   657→            ImGui::EndDisabled();
+   658→            ImGui::BeginDisabled(!g_model.CanRedo());
+   659→            if (ImGui::MenuItem("Yinele", "Ctrl+Y")) g_model.Redo();
+   660→            ImGui::EndDisabled();
+   661→            ImGui::Separator();
+   662→            if (ImGui::MenuItem("Sil", "Del")) { if (!g_model.selList.empty()) { g_model.PushUndo(); g_model.DeleteList(g_model.ValidSelection()); } }
+   663→            ImGui::BeginDisabled(g_model.selList.empty());
+   664→            if (ImGui::MenuItem("\303\226ne Getir")) g_model.BringToFront(g_model.Primary());
+   665→            if (ImGui::MenuItem("Arkaya G\303\266nder")) g_model.SendToBack(g_model.Primary());
+   666→            ImGui::EndDisabled();
+   667→            ImGui::EndMenu();
+   668→        }
+   669→        if (ImGui::BeginMenu("G\303\266r\303\274n\303\274m")) {
+   670→            if (ImGui::MenuItem("Izgara", nullptr, g_gridVisible)) g_gridVisible = !g_gridVisible;
+   671→            if (ImGui::MenuItem("Snap (8px)", nullptr, g_snapEnabled)) g_snapEnabled = !g_snapEnabled;
+   672→            ImGui::Separator();
+   673→            if (ImGui::MenuItem("Kod Gezgini", nullptr, g_showCodetree)) g_showCodetree = !g_showCodetree;
+   674→            if (ImGui::MenuItem("Ara\303\247 Kutusu", nullptr, g_showToolbox)) g_showToolbox = !g_showToolbox;
+   675→            if (ImGui::MenuItem("Formlar", nullptr, g_showForms)) g_showForms = !g_showForms;
+   676→            if (ImGui::MenuItem("\303\226zellikler/Olaylar", nullptr, g_showProps)) g_showProps = !g_showProps;
+   677→            ImGui::EndMenu();
+   678→        }
+   679→        if (ImGui::BeginMenu("\303\234retim")) {
+   680→            if (ImGui::MenuItem("Kod \303\234ret...", "F6")) s_genDialog = true;
+   681→            ImGui::MenuItem("D3D S\303\274r\303\274m\303\274 se\303\247im diyalo\304\237u", nullptr, false);
+   682→            ImGui::Separator();
+   683→            ImGui::Text("Aktif motor: %s | \303\234retim: %s",
+   684→                        BackendNameA((EditorBackend)(es ? es->editorBackend : 0)),
+   685→                        BackendNameA((EditorBackend)codegen::g_settings.backend));
+   686→            ImGui::EndMenu();
+   687→        }
+   688→        if (ImGui::BeginMenu("Tema")) {
+   689→            for (auto& t : theme::List())
+   690→                if (ImGui::MenuItem(t.name, nullptr, s_editorTheme == t.id)) {
+   691→                    s_editorTheme = t.id;
+   692→                    theme::Apply(t.id);
+   693→                }
+   694→            ImGui::EndMenu();
+   695→        }
+   696→        if (ImGui::BeginMenu("Yard\304\261m")) {
+   697→            if (ImGui::MenuItem("Hakk\304\261nda")) s_aboutOpen = true;
+   698→            ImGui::EndMenu();
+   699→        }
+   700→        ImGui::EndMainMenuBar();
+   701→    }
+   702→
+   703→    // ---- araç çubuğu ----
+   704→    {
+   705→        ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
+   706→        ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, 30));
+   707→        ImGui::Begin("##tb", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+   708→        if (ToolbarButton("Yeni", "Yeni proje")) DoNewProject();
+   709→        ImGui::SameLine();
+   710→        if (ToolbarButton("A\303\247", "Proje a\303\247 (Ctrl+O)")) DoOpen();
+   711→        ImGui::SameLine();
+   712→        if (ToolbarButton("Kaydet", "Kaydet (Ctrl+S)")) DoSave(false);
+   713→        ImGui::SameLine(); ImGui::Separator();
+   714→        if (ToolbarButton("Geri", "Geri al (Ctrl+Z)", g_model.CanUndo())) g_model.Undo();
+   715→        ImGui::SameLine();
+   716→        if (ToolbarButton("\304\260leri", "Yinele (Ctrl+Y)", g_model.CanRedo())) g_model.Redo();
+   717→        ImGui::SameLine(); ImGui::Separator();
+   718→        if (ToolbarButton("Sil", "Sil (Del)", !g_model.selList.empty())) { g_model.PushUndo(); g_model.DeleteList(g_model.ValidSelection()); }
+   719→        ImGui::SameLine(); ImGui::Separator();
+   720→        if (ToolbarButton("\303\234ret", "Kod \303\234ret (F6)")) s_genDialog = true;
+   721→        ImGui::SameLine(); ImGui::Separator();
+   722→        ImGui::Text("%s | %s | motor: %s | \303\274retim: %s",
+   723→                    forms::Active() ? forms::Active()->name.c_str() : "-",
+   724→                    g_model.selList.size() > 1 ? (std::to_string(g_model.selList.size()) + " nesne").c_str() : (g_model.Primary() ? g_model.Primary()->name.c_str() : (g_model.formSelected ? "form" : "-")),
+   725→                    BackendNameA((EditorBackend)(es ? es->editorBackend : 0)),
+   726→                    BackendNameA((EditorBackend)codegen::g_settings.backend));
+   727→        ImGui::End();
+   728→    }
+   729→
+   730→    // ---- yerleşim ----
+   731→    float menuH = ImGui::GetFrameHeight() + 30.0f + 6.0f;
+   732→    float statusH = STATUSBAR_H;
+   733→    float leftW = (g_showCodetree || g_showToolbox) ? ImMax(CODETREE_W, TOOLBOX_W) : 0;
+   734→    float rightW = g_showProps ? PROPS_W : 0;
+   735→    float bodyX0 = leftW + (leftW ? SPLIT_W : 0);
+   736→    float bodyX1 = io.DisplaySize.x - (rightW ? rightW + SPLIT_W : 0);
+   737→    float bodyY0 = menuH;
+   738→    float bodyY1 = io.DisplaySize.y - statusH;
+   739→
+   740→    // sol sütun
+   741→    if (leftW > 0) {
+   742→        float ctH = g_showCodetree ? (bodyY1 - bodyY0) * 0.5f - SPLIT_W / 2 : 0;
+   743→        if (g_showCodetree && ctH > 40) DrawCodetree(ImVec2(0, bodyY0), ImVec2(leftW, bodyY0 + ctH));
+   744→        if (g_showToolbox) DrawToolbox(ImVec2(0, g_showCodetree ? bodyY0 + ctH + SPLIT_W : bodyY0), ImVec2(leftW, bodyY1));
+   745→    }
+   746→    // sağ sütun
+   747→    if (g_showForms) {
+   748→        DrawFormList(ImVec2(bodyX1, bodyY0), ImVec2(io.DisplaySize.x, bodyY0 + FORMLIST_H));
+   749→        if (g_showProps) DrawPropsPanel(ImVec2(bodyX1, bodyY0 + FORMLIST_H + SPLIT_W), ImVec2(io.DisplaySize.x, bodyY1));
+   750→    } else if (g_showProps) {
+   751→        DrawPropsPanel(ImVec2(bodyX1, bodyY0), ImVec2(io.DisplaySize.x, bodyY1));
+   752→    }
+   753→
+   754→    // merkez: canvas
+   755→    canvas::Draw(ImVec2(bodyX0, bodyY0), ImVec2(bodyX1, bodyY1));
+   756→
+   757→    // ---- durum çubuğu ----
+   758→    {
+   759→        ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - statusH));
+   760→        ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, statusH));
+   761→        ImGui::Begin("##status", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
+   762→        ImGui::Text("%s   |   %s   |   ızgara:%s snap:%s   |   %d kare",
+   763→                    s_status.c_str(),
+   764→                    g_modelDirty ? "KAYDED\304\260LMED\304\260\305\236" : "temiz",
+   765→                    g_gridVisible ? "a\303\247\304\261k" : "kapal\304\261",
+   766→                    g_snapEnabled ? "8px" : "kapal\304\261",
+   767→                    s_selftestFrame);
+   768→        ImGui::End();
+   769→    }
+   770→
+   771→    // diyaloglar
+   772→    if (s_genDialog) DrawGenDialog();
+   773→    if (s_aboutOpen) {
+   774→        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f - 260, io.DisplaySize.y * 0.5f - 140), ImGuiCond_FirstUseEver);
+   775→        ImGui::Begin("Hakk\304\261nda", &s_aboutOpen, ImGuiWindowFlags_NoSavedSettings);
+   776→        ImGui::TextUnformatted("IMGUI GOD SSS TIER v1.0");
+   777→        ImGui::TextUnformatted("M2GodWin32 Faz 2.13 evreninin ImGui d\303\266n\303\274\305\237\303\274m\303\274.");
+   778→        ImGui::TextUnformatted("Edit\303\266r: ImGui (WYSIWYG canvas) + se\303\247ilebilir D3D motoru.");
+   779→        ImGui::TextUnformatted("\303\234retim: VS2019 (v142) / MinGW — DX9/DX10/DX11/DX12/OpenGL3.");
+   780→        ImGui::TextUnformatted("Temalar: ImGui Dark/Light/Classic + GOD OPS / Midnight Steel / Ammo Tan.");
+   781→        ImGui::TextUnformatted("(Ruby/Yellow/Purple Graphite Win32API'ye \303\266zeldi — bilin\303\247li olarak YOK.)");
+   782→        ImGui::End();
+   783→    }
+   784→
+   785→    HandleShortcuts(io);
+   786→}
+   787→
+   788→} // namespace ui_editor
+   789→

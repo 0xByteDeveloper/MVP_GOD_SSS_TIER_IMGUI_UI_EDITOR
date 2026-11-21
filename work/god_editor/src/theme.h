@@ -32,4 +32,10 @@ void Apply(int id);                     // ImGui stiline uygular (ImGui::CreateC
 // üretilen koda taşınan tema çağrısı ("ImGui::StyleColorsDark();" veya "IGOD::ApplyGodOpsTheme();")
 std::string GenThemeApiCall(int id);
 
+// WYSIWYG: tasarım yüzeyi, ÜRETİM temasıyla çizilir (editör temasıyla değil).
+// PushProduction: mevcut ImGuiStyle'ı yedekler + üretim temasını uygular.
+// PopProduction: yedeği geri yükler. (Yuvalanabilir.)
+void PushProduction(int id);
+void PopProduction();
+
 } // namespace theme

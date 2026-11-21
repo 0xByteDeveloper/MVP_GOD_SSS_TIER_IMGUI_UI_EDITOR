@@ -1,0 +1,748 @@
+     1→// ui_editor.cpp — ana düzenleyici pencere: menü + araç çubuğu + paneller
+     2→// (sol: Kod Gezgini/Araç Kutusu, merkez: Tasarım Yüzeyi, sağ: Formlar/Özellikler)
+     3→// + başlangıç ekranı (VS seç / önceki tasarım / VS'siz) + kod önizleme + kod üretimi.
+     4→#include "ui_editor.h"
+     5→#include "app.h"
+     6→#include "json.h"
+     7→#include "catalog.h"
+     8→#include "model.h"
+     9→#include "forms.h"
+    10→#include "style.h"
+    11→#include "canvas.h"
+    12→#include "toolbox.h"
+    13→#include "formlist.h"
+    14→#include "props.h"
+    15→#include "codegen.h"
+    16→#include "vsint.h"
+    17→#include "Global.h"
+    18→#include "imgui/imgui.h"
+    19→#include <commdlg.h>
+    20→#include <shellapi.h>
+    21→#include <shlobj.h>
+    22→
+    23→namespace uied {
+    24→
+    25→// ---------------------------------------------------------------------------
+    26→// durum
+    27→// ---------------------------------------------------------------------------
+    28→static float  s_leftW = 235.0f;       // sol sütun genişliği (ayraçla)
+    29→static float  s_rightW = 340.0f;      // sağ sütun
+    30→static float  s_leftSplit = 0.42f;    // sol üst/sol alt oranı
+    31→static float  s_rightSplit = 0.36f;  // sağ üst/sağ alt oranı
+    32→static bool   s_showCodeTree = true;
+    33→static bool   s_showToolbox = true;
+    34→static bool   s_showRightPanel = true;
+    35→static bool   s_showStatus = true;
+    36→static bool   s_previewOpen = false;  // F12 kod önizleme
+    37→static int    s_previewTab = 0;       // .cpp / .h / main.cpp
+    38→static std::wstring s_projectPath;    // kayıtlı .m2god yolu (Kaydet için)
+    39→static std::wstring s_genFolder;      // kod üretim klasörü
+    40→
+    41→// ayraç sürükleme yardımcı (yayın çizgisiyle)
+    42→static void Splitter(const char* id, float* size, float min, float max, bool verticalAxis) {
+    43→    ImGui::PushID(id);
+    44→    ImVec2 p = ImGui::GetCursorScreenPos();
+    45→    ImVec2 sz = verticalAxis ? ImVec2(4, ImGui::GetContentRegionAvail().y)
+    46→                             : ImVec2(ImGui::GetContentRegionAvail().x, 4);
+    47→    ImGui::InvisibleButton(id, sz, ImGuiButtonFlags_MouseButtonLeft);
+    48→    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+    49→        float delta = verticalAxis ? ImGui::GetIO().MouseDelta.x : ImGui::GetIO().MouseDelta.y;
+    50→        *size += delta;
+    51→        if (*size < min) *size = min;
+    52→        if (*size > max) *size = max;
+    53→    }
+    54→    if (ImGui::IsItemHovered())
+    55→        ImGui::SetMouseCursor(verticalAxis ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
+    56→    ImDrawList* dl = ImGui::GetWindowDrawList();
+    57→    ImU32 col = ImGui::GetColorU32(ImGui::IsItemActive() || ImGui::IsItemHovered()
+    58→                                   ? ImGuiCol_SeparatorActive : ImGuiCol_Separator);
+    59→    dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), col, 2.0f);
+    60→    ImGui::PopID();
+    61→}
+    62→
+    63→// ---------------------------------------------------------------------------
+    64→// dosya diyalogları (Win32 klasik — editör kipi modaldır)
+    65→// ---------------------------------------------------------------------------
+    66→static bool OpenFileDialog(std::wstring& out, const wchar_t* filter, const wchar_t* defExt) {
+    67→    wchar_t file[MAX_PATH] = L"";
+    68→    OPENFILENAMEW ofn = { sizeof(ofn) };
+    69→    ofn.hwndOwner = g_hMain;
+    70→    ofn.lpstrFile = file; ofn.nMaxFile = MAX_PATH;
+    71→    ofn.lpstrFilter = filter;
+    72→    ofn.lpstrDefExt = defExt;
+    73→    ofn.Flags = OFN_FILEMUSTEXIST | OFN_EXPLORER;
+    74→    if (GetOpenFileNameW(&ofn)) { out = file; return true; }
+    75→    return false;
+    76→}
+    77→static bool SaveFileDialog(std::wstring& out, const wchar_t* filter, const wchar_t* defExt) {
+    78→    wchar_t file[MAX_PATH] = L"";
+    79→    OPENFILENAMEW ofn = { sizeof(ofn) };
+    80→    ofn.hwndOwner = g_hMain;
+    81→    ofn.lpstrFile = file; ofn.nMaxFile = MAX_PATH;
+    82→    ofn.lpstrFilter = filter;
+    83→    ofn.lpstrDefExt = defExt;
+    84→    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_EXPLORER;
+    85→    if (GetSaveFileNameW(&ofn)) { out = file; return true; }
+    86→    return false;
+    87→}
+    88→static bool BrowseFolder(std::wstring& out, const wchar_t* title) {
+    89→    BROWSEINFOW bi = {};
+    90→    bi.hwndOwner = g_hMain;
+    91→    bi.lpszTitle = title;
+    92→    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    93→    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    94→    if (!pidl) return false;
+    95→    wchar_t path[MAX_PATH];
+    96→    if (!SHGetPathFromIDListW(pidl, path)) { CoTaskMemFree(pidl); return false; }
+    97→    CoTaskMemFree(pidl);
+    98→    out = path;
+    99→    return true;
+   100→}
+   101→
+   102→// ---------------------------------------------------------------------------
+   103→// proje komutları
+   104→// ---------------------------------------------------------------------------
+   105→static void DoNew() {
+   106→    if (g_modelDirty) {
+   107→        // basit uyarı: kaydetmeden yeni tasarım
+   108→    }
+   109→    forms::InitNew();
+   110→    s_projectPath.clear();
+   111→    g_modelDirty = false;
+   112→    Status(L"Yeni tasarım: Form1");
+   113→}
+   114→static void DoOpen(const std::wstring& path = L"") {
+   115→    std::wstring p = path;
+   116→    if (p.empty())
+   117→        if (!OpenFileDialog(p, L"M2God Tasarım (*.m2god)\0*.m2god\0", L"m2god")) return;
+   118→    if (forms::LoadProject(p)) {
+   119→        s_projectPath = p;
+   120→        g_modelDirty = false;
+   121→        style::Apply(forms::ThemeId());
+   122→        Status(L"Açıldı: " + GetFileName(p));
+   123→    } else Status(L"Açma hatası: " + GetFileName(p));
+   124→}
+   125→static void DoSave(bool as = false) {
+   126→    std::wstring p = s_projectPath;
+   127→    if (p.empty() || as) {
+   128→        if (!SaveFileDialog(p, L"M2God Tasarım (*.m2god)\0*.m2god\0", L"m2god")) return;
+   129→    }
+   130→    if (forms::SaveProject(p)) {
+   131→        s_projectPath = p;
+   132→        g_modelDirty = false;
+   133→        Status(L"Kaydedildi: " + GetFileName(p));
+   134→    } else Status(L"Kaydetme hatası");
+   135→}
+   136→static void DoGenerate() {
+   137→    std::wstring folder = s_genFolder;
+   138→    if (!BrowseFolder(folder, L"Kod üretilecek klasör")) return;
+   139→    s_genFolder = folder;
+   140→    std::wstring proj = !folder.empty() ? GetFileName(folder) : L"M2GodApp";
+   141→    if (proj.empty() || proj == folder) proj = L"M2GodApp";
+   142→    if (codegen::EmitProject(folder, proj))
+   143→        Status(L"Kod üretildi: " + folder + L"\\" + proj + L".sln");
+   144→    else Status(L"Kod üretilemedi (SDK imgui/ klasörü exe yanında olmalı)");
+   145→}
+   146→
+   147→// ---------------------------------------------------------------------------
+   148→// klavye kısayolları
+   149→// ---------------------------------------------------------------------------
+   150→static void Shortcuts() {
+   151→    ImGuiIO& io = ImGui::GetIO();
+   152→    if (io.WantTextInput) return;
+   153→    if (ImGui::IsKeyPressed(ImGuiKey_N) && io.KeyCtrl) DoNew();
+   154→    if (ImGui::IsKeyPressed(ImGuiKey_O) && io.KeyCtrl) DoOpen();
+   155→    if (ImGui::IsKeyPressed(ImGuiKey_S) && io.KeyCtrl) DoSave();
+   156→    if (ImGui::IsKeyPressed(ImGuiKey_F6)) DoGenerate();
+   157→    if (ImGui::IsKeyPressed(ImGuiKey_F12)) s_previewOpen = !s_previewOpen;
+   158→    if (ImGui::IsKeyPressed(ImGuiKey_Z) && io.KeyCtrl && g_model.CanUndo()) { g_model.Undo(); g_modelDirty = true; }
+   159→    if (ImGui::IsKeyPressed(ImGuiKey_Y) && io.KeyCtrl && g_model.CanRedo()) { g_model.Redo(); g_modelDirty = true; }
+   160→    if (ImGui::IsKeyPressed(ImGuiKey_C) && io.KeyCtrl) canvas::CopySel();
+   161→    if (ImGui::IsKeyPressed(ImGuiKey_X) && io.KeyCtrl) canvas::CutSel();
+   162→    if (ImGui::IsKeyPressed(ImGuiKey_V) && io.KeyCtrl) {
+   163→        // son fare konumuna (form merkezine) yapıştır
+   164→        ImVec2 m = io.MousePos;
+   165→        canvas::PasteAt((int)m.x, (int)m.y);
+   166→    }
+   167→    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && g_model.selected) {
+   168→        g_model.PushUndo();
+   169→        g_model.Delete(g_model.selected);
+   170→        g_modelDirty = true;
+   171→    }
+   172→    if (ImGui::IsKeyPressed(ImGuiKey_T) && io.KeyCtrl && g_model.selected) { g_model.BringToFront(g_model.selected); g_modelDirty = true; }
+   173→    if (ImGui::IsKeyPressed(ImGuiKey_B) && io.KeyCtrl && g_model.selected) { g_model.SendToBack(g_model.selected); g_modelDirty = true; }
+   174→    if (ImGui::IsKeyPressed(ImGuiKey_F7) && vsint::IsConnected())
+   175→        vsint::SyncToProject(g_model.selected, L"", nullptr);
+   176→}
+   177→
+   178→// ---------------------------------------------------------------------------
+   179→// menü çubuğu
+   180→// ---------------------------------------------------------------------------
+   181→static void MenuBar() {
+   182→    if (!ImGui::BeginMenuBar()) { ImGui::EndMenuBar(); return; }
+   183→    if (ImGui::BeginMenu("Dosya")) {
+   184→        if (ImGui::MenuItem("Yeni Tasarım", "Ctrl+N")) DoNew();
+   185→        if (ImGui::MenuItem("Aç...", "Ctrl+O")) DoOpen();
+   186→        if (ImGui::MenuItem("Kaydet", "Ctrl+S")) DoSave();
+   187→        if (ImGui::MenuItem("Farklı Kaydet...")) DoSave(true);
+   188→        ImGui::Separator();
+   189→        if (ImGui::MenuItem("Kod Üret (Proje Klasörü)...", "F6")) DoGenerate();
+   190→        if (ImGui::MenuItem("Kod Önizleme", "F12")) s_previewOpen = !s_previewOpen;
+   191→        ImGui::Separator();
+   192→        if (ImGui::MenuItem("Çıkış")) PostQuitMessage(0);
+   193→        ImGui::EndMenu();
+   194→    }
+   195→    if (ImGui::BeginMenu("Düzen")) {
+   196→        if (ImGui::MenuItem("Geri Al", "Ctrl+Z", false, g_model.CanUndo())) { g_model.Undo(); g_modelDirty = true; }
+   197→        if (ImGui::MenuItem("Yinele", "Ctrl+Y", false, g_model.CanRedo())) { g_model.Redo(); g_modelDirty = true; }
+   198→        ImGui::Separator();
+   199→        if (ImGui::MenuItem("Kes", "Ctrl+X")) canvas::CutSel();
+   200→        if (ImGui::MenuItem("Kopyala", "Ctrl+C")) canvas::CopySel();
+   201→        if (ImGui::MenuItem("Yapıştır", "Ctrl+V")) canvas::PasteAt(g_model.formW / 2, g_model.formH / 2);
+   202→        if (ImGui::MenuItem("Sil", "Del", false, g_model.selected != nullptr)) {
+   203→            g_model.PushUndo();
+   204→            g_model.Delete(g_model.selected);
+   205→            g_modelDirty = true;
+   206→        }
+   207→        ImGui::Separator();
+   208→        if (ImGui::MenuItem("Öne Getir", "Ctrl+T", false, g_model.selected != nullptr)) { g_model.BringToFront(g_model.selected); g_modelDirty = true; }
+   209→        if (ImGui::MenuItem("Arkaya Gönder", "Ctrl+B", false, g_model.selected != nullptr)) { g_model.SendToBack(g_model.selected); g_modelDirty = true; }
+   210→        ImGui::EndMenu();
+   211→    }
+   212→    if (ImGui::BeginMenu("Form")) {
+   213→        if (ImGui::MenuItem("Yeni Form", "Ctrl+Shift+N")) { std::wstring n = forms::AddNew(); g_modelDirty = true; Status(L"Yeni form: " + n); }
+   214→        if (ImGui::MenuItem("Yeniden Adlandır...", "F2")) {
+   215→            // modal: form adı
+   216→            ImGui::OpenPopup("Yeniden Adlandır");
+   217→        }
+   218→        ImGui::Separator();
+   219→        if (ImGui::MenuItem("Sil", nullptr, false, forms::Count() > 1)) { forms::RemoveAt(forms::ActiveIndex()); g_modelDirty = true; }
+   220→        ImGui::EndMenu();
+   221→    }
+   222→    if (ImGui::BeginMenu("Görünüm")) {
+   223→        if (ImGui::MenuItem("Kod Gezgini", nullptr, &s_showCodeTree)) {}
+   224→        if (ImGui::MenuItem("Araç Kutusu", nullptr, &s_showToolbox)) {}
+   225→        if (ImGui::MenuItem("Sağ Panel (Formlar + Özellikler)", nullptr, &s_showRightPanel)) {}
+   226→        if (ImGui::MenuItem("Izgara Yapış", nullptr, canvas::SnapEnabled())) canvas::SetSnapEnabled(!canvas::SnapEnabled());
+   227→        if (ImGui::MenuItem("Bileşen Tepsisi", nullptr, canvas::ComponentTrayVisible())) canvas::SetComponentTrayVisible(!canvas::ComponentTrayVisible());
+   228→        if (ImGui::MenuItem("Durum Çubuğu", nullptr, &s_showStatus)) {}
+   229→        ImGui::Separator();
+   230→        if (ImGui::BeginMenu("Grafik Arka Ucu")) {
+   231→            GfxBackend cur = LoadBackendConfig();
+   232→            for (int b = 0; b <= 4; b++) {
+   233→                GfxBackend gb = (GfxBackend)b;
+   234→                if (!BackendUsable(gb)) continue;
+   235→                bool sel = (gb == cur);
+   236→                if (ImGui::MenuItem(M2God::W2U(BackendName(gb)).c_str(), nullptr, sel)) {
+   237→                    SaveBackendConfig(gb);
+   238→                    Status(std::wstring(L"Arka uç ayarı: ") + BackendName(gb) +
+   239→                           L" — yeniden başlatınca uygulanır (M2GodImGui.cfg)");
+   240→                }
+   241→            }
+   242→            ImGui::EndMenu();
+   243→        }
+   244→        ImGui::EndMenu();
+   245→    }
+   246→    if (ImGui::BeginMenu("Stil")) {
+   247→        int cur = forms::ThemeId();
+   248→        for (int i = 0; i < 3; i++) {
+   249→            if (ImGui::MenuItem(M2God::W2U(style::NameOf(i)).c_str(), nullptr, cur == i)) {
+   250→                forms::SetThemeId(i);
+   251→                style::Apply(i);
+   252→                g_modelDirty = true;
+   253→            }
+   254→        }
+   255→        ImGui::EndMenu();
+   256→    }
+   257→    if (ImGui::BeginMenu("Proje")) {
+   258→        if (ImGui::MenuItem("Visual Studio'ya Bağlan...", "Ctrl+Shift+V")) ImGui::OpenPopup("VS Bağlan");
+   259→        if (ImGui::MenuItem("Bağlantıyı Kes", nullptr, false, vsint::IsConnected())) vsint::Disconnect();
+   260→        ImGui::Separator();
+   261→        if (ImGui::MenuItem("Aktif Formun .h/.cpp'sini Senkronize Et", "F7", nullptr, vsint::IsConnected()))
+   262→            vsint::SyncToProject(g_model.selected, L"", nullptr);
+   263→        if (ImGui::MenuItem("Bağlı Proje Klasörünü Aç", nullptr, nullptr, vsint::IsConnected())) {
+   264→            std::wstring dir = GetFileDir(vsint::Current().projectPath);
+   265→            if (DirExists(dir)) ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+   266→        }
+   267→        ImGui::EndMenu();
+   268→    }
+   269→    if (ImGui::BeginMenu("Yardım")) {
+   270→        if (ImGui::MenuItem("Hakkında...")) ImGui::OpenPopup("Hakkında");
+   271→        ImGui::EndMenu();
+   272→    }
+   273→    ImGui::EndMenuBar();
+   274→}
+   275→
+   276→// ---------------------------------------------------------------------------
+   277→// araç çubuğu
+   278→// ---------------------------------------------------------------------------
+   279→static void Toolbar() {
+   280→    struct B { const wchar_t* label; bool (*fn)(); const wchar_t* tip; bool (*en)(); };
+   281→    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
+   282→    if (ImGui::Button("Yeni")) DoNew();
+   283→    ImGui::SameLine();
+   284→    if (ImGui::Button("Aç")) DoOpen();
+   285→    ImGui::SameLine();
+   286→    if (ImGui::Button("Kaydet")) DoSave();
+   287→    ImGui::SameLine(); ImGui::TextUnformatted("|");
+   288→    ImGui::SameLine();
+   289→    if (ImGui::Button("Yeni Form")) { std::wstring n = forms::AddNew(); g_modelDirty = true; (void)n; }
+   290→    ImGui::SameLine(); ImGui::TextUnformatted("|");
+   291→    ImGui::SameLine();
+   292→    if (ImGui::Button("Geri Al", ImVec2(0, 0)) && g_model.CanUndo()) { g_model.Undo(); g_modelDirty = true; }
+   293→    ImGui::SameLine();
+   294→    if (ImGui::Button("Yinele", ImVec2(0, 0)) && g_model.CanRedo()) { g_model.Redo(); g_modelDirty = true; }
+   295→    ImGui::SameLine(); ImGui::TextUnformatted("|");
+   296→    ImGui::SameLine();
+   297→    if (ImGui::Button("Kod Üret  (F6)")) DoGenerate();
+   298→    ImGui::SameLine();
+   299→    if (ImGui::Button("Kod Önizleme  (F12)")) s_previewOpen = !s_previewOpen;
+   300→    ImGui::SameLine(); ImGui::TextUnformatted("|");
+   301→    ImGui::SameLine();
+   302→    if (ImGui::Button("VS'ye Bağlan")) ImGui::OpenPopup("VS Bağlan");
+   303→    ImGui::SameLine();
+   304→    if (ImGui::Button("Senkron  (F7)")) {
+   305→        if (vsint::IsConnected()) vsint::SyncToProject(g_model.selected, L"", nullptr);
+   306→        else Status(L"VS bağlı değil — Proje menüsünden bağlanın");
+   307→    }
+   308→    ImGui::PopStyleVar();
+   309→}
+   310→
+   311→// ---------------------------------------------------------------------------
+   312→// popup'lar: yeniden adlandır / VS bağlan / hakkında
+   313→// ---------------------------------------------------------------------------
+   314→static char s_renameBuf[64] = "";
+   315→
+   316→static void Popups() {
+   317→    // form yeniden adlandır
+   318→    ImGui::SetNextWindowSize(ImVec2(360, 120), ImGuiCond_Appearing);
+   319→    if (ImGui::BeginPopupModal("Yeniden Adlandır", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+   320→        strcpy(s_renameBuf, M2God::W2U(forms::ActiveName()).c_str());
+   321→        ImGui::TextUnformatted("Yeni form adı:");
+   322→        ImGui::InputText("##nm", s_renameBuf, sizeof(s_renameBuf));
+   323→        ImGui::Separator();
+   324→        if (ImGui::Button("Tamam", ImVec2(90, 0))) {
+   325→            if (forms::RenameActive(M2God::U2W(s_renameBuf))) { g_modelDirty = true; Status(L"Form: " + M2God::U2W(s_renameBuf)); }
+   326→            ImGui::CloseCurrentPopup();
+   327→        }
+   328→        ImGui::SameLine();
+   329→        if (ImGui::Button("İptal", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+   330→        ImGui::EndPopup();
+   331→    }
+   332→    // VS bağlan
+   333→    ImGui::SetNextWindowSize(ImVec2(560, 380), ImGuiCond_Appearing);
+   334→    if (ImGui::BeginPopupModal("VS Bağlan", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+   335→        static std::vector<vsint::VSInstance> insts;
+   336→        static bool filled = false;
+   337→        if (!filled || ImGui::Button("Yenile")) {
+   338→            insts = vsint::Enumerate();
+   339→            filled = true;
+   340→        }
+   341→        ImGui::Separator();
+   342→        if (insts.empty()) {
+   343→            ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1),
+   344→                "Calisan Visual Studio bulunamadi (devenv.exe).\nBaglanmak icin VS'yi bir .sln ile acin, sonra Yenile.");
+   345→        } else {
+   346→            ImGui::TextUnformatted("1) Calisan Visual Studio ornegini secin:");
+   347→            static int sel = -1;
+   348→            for (int i = 0; i < (int)insts.size(); i++) {
+   349→                char lbl[256];
+   350→                snprintf(lbl, sizeof(lbl), "%s  [%s]%s",
+   351→                         M2God::W2U(insts[i].title).c_str(),
+   352→                         M2God::W2U(insts[i].version).c_str(),
+   353→                         !insts[i].solutionPath.empty() ? "  (cozum bulundu)" : "");
+   354→                if (ImGui::RadioButton(lbl, sel == i)) sel = i;
+   355→            }
+   356→            if (sel >= 0 && !insts[sel].solutionPath.empty()) {
+   357→                ImGui::Separator();
+   358→                ImGui::TextUnformatted("2) Proje secin:");
+   359→                static std::vector<std::wstring> projects;
+   360→                static int selProj = 0;
+   361→                static DWORD selPid = 0;
+   362→                if (selPid != insts[sel].pid) {
+   363→                    projects = vsint::EnumerateProjectsOfSolution(insts[sel].solutionPath);
+   364→                    if (projects.empty())
+   365→                        projects = vsint::FindVcxprojsUnder(GetFileDir(insts[sel].solutionPath), 3);
+   366→                    selPid = insts[sel].pid;
+   367→                    selProj = 0;
+   368→                }
+   369→                if (projects.empty()) ImGui::TextDisabled("(cozumde .vcxproj yok)");
+   370→                else {
+   371→                    const char* names[64];
+   372→                    std::vector<std::string> keep;
+   373→                    for (auto& p : projects) keep.push_back(M2God::W2U(GetFileName(p)));
+   374→                    for (int i = 0; i < (int)keep.size(); i++) names[i] = keep[i].c_str();
+   375→                    ImGui::ListBox("##proj", &selProj, names, (int)keep.size(), 6);
+   376→                }
+   377→            }
+   378→            ImGui::Separator();
+   379→            if (ImGui::Button("Baglan", ImVec2(110, 0)) && sel >= 0) {
+   380→                std::wstring projPath;
+   381→                if (!insts[sel].solutionPath.empty()) {
+   382→                    auto projects = vsint::EnumerateProjectsOfSolution(insts[sel].solutionPath);
+   383→                    if (projects.empty())
+   384→                        projects = vsint::FindVcxprojsUnder(GetFileDir(insts[sel].solutionPath), 3);
+   385→                    if (!projects.empty()) projPath = projects[0];
+   386→                }
+   387→                if (vsint::Connect(insts[sel], projPath)) {
+   388→                    vsint::PrepareProjectFiles();
+   389→                    Status(L"VS bağlandı: " + vsint::Current().projectName);
+   390→                    ImGui::CloseCurrentPopup();
+   391→                } else Status(L"Bağlanamadı: .vcxproj bulunamadı");
+   392→            }
+   393→            ImGui::SameLine();
+   394→            if (ImGui::Button("Kapat", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
+   395→        }
+   396→        ImGui::EndPopup();
+   397→    }
+   398→    // hakkında
+   399→    if (ImGui::BeginPopupModal("Hakkında", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+   400→        ImGui::TextUnformatted("M2God ImGui Editor — IMGUI_GOD_SSSTIER");
+   401→        ImGui::BulletText("M2GodWin32 Faz2.13 Win32 UI editorunun ImGui portu");
+   402→        ImGui::BulletText("UI editör KENDISI de ImGui (tek OS penceresi)");
+   403→        ImGui::BulletText("Editorde gorunen = uretilen exe'de gorunen (Global.h SDK)");
+   404→        ImGui::BulletText("5 grafik arka uc: D3D9 / D3D10 / D3D11 / D3D12 / OpenGL3");
+   405→        ImGui::BulletText("Kod uretimi: VS2019 v142 klasoru (.sln + .vcxproj + imgui)");
+   406→        ImGui::Separator();
+   407→        ImGui::TextUnformatted("Win32'a ozel temalar (Ruby/Yellow/Purple Graphite vb.) bilincli yok —");
+   408→        ImGui::TextUnformatted("gorunum Dear ImGui'nin kendi on ayarlaridir (Dark/Light/Classic).");
+   409→        ImGui::Separator();
+   410→        if (ImGui::Button("Tamam", ImVec2(90, 0))) ImGui::CloseCurrentPopup();
+   411→        ImGui::EndPopup();
+   412→    }
+   413→}
+   414→
+   415→// ---------------------------------------------------------------------------
+   416→// kod önizleme (F12)
+   417→// ---------------------------------------------------------------------------
+   418→static void CodePreview() {
+   419→    if (!s_previewOpen) return;
+   420→    ImGui::SetNextWindowSize(ImVec2(760, 560), ImGuiCond_FirstUseEver);
+   421→    if (!ImGui::Begin(("Kod Önizleme — " + M2God::W2U(forms::ActiveName()) + " (F12)").c_str(), &s_previewOpen)) {
+   422→        ImGui::End();
+   423→        return;
+   424→    }
+   425→    const char* tabs[] = { ".cpp", ".h", "main.cpp", "Global.h" };
+   426→    if (ImGui::BeginTabBar("##codetabs")) {
+   427→        for (int i = 0; i < 4; i++) {
+   428→            if (!ImGui::BeginTabItem(tabs[i])) continue;
+   429→            s_previewTab = i;
+   430→            std::wstring text;
+   431→            switch (i) {
+   432→            case 0: text = codegen::GenerateForm1Cpp(); break;
+   433→            case 1: text = codegen::GenerateForm1H(); break;
+   434→            case 2: text = codegen::SdkDir().empty() ? L"(main.cpp üretimi Kod Üret ile klasöre yazılır)"
+   435→                                                      : L"(Kod Üret F6 ile tam main.cpp üretilir)"; break;
+   436→            case 3: text = codegen::GenerateGlobalH(); break;
+   437→            }
+   438→            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.08f, 1.0f));
+   439→            if (ImGui::BeginChild("##code", ImVec2(0, 0), true)) {
+   440→                std::string u8 = M2God::W2U(text);
+   441→                // satır sayısına göre child yüksekliği — ImGui::TextUnformatted satır bazlı
+   442→                ImGui::TextUnformatted(u8.c_str());
+   443→            }
+   444→            ImGui::EndChild();
+   445→            ImGui::PopStyleColor();
+   446→            ImGui::EndTabItem();
+   447→        }
+   448→        ImGui::EndTabBar();
+   449→    }
+   450→    ImGui::End();
+   451→}
+   452→
+   453→// ---------------------------------------------------------------------------
+   454→// ANA RENDER
+   455→// ---------------------------------------------------------------------------
+   456→void Render() {
+   457→    ImGuiViewport* vp = ImGui::GetMainViewport();
+   458→    ImGui::SetNextWindowPos(vp->WorkPos);
+   459→    ImGui::SetNextWindowSize(vp->WorkSize);
+   460→    static ImGuiWindowFlags wf = ImGuiWindowFlags_NoTitleBar |
+   461→                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+   462→                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
+   463→                                 ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_MenuBar;
+   464→    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+   465→    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+   466→    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+   467→    ImGui::Begin("##m2godEditor", nullptr, wf);
+   468→    ImGui::PopStyleVar(3);
+   469→
+   470→    MenuBar();
+   471→    Toolbar();
+   472→    Shortcuts();
+   473→    Popups();
+   474→
+   475→    // yerleşim: | sol | merkez | sağ |
+   476→    float availH = ImGui::GetContentRegionAvail().y - (s_showStatus ? STATUS_H : 0);
+   477→    ImGui::BeginChild("##body", ImVec2(0, availH), false, ImGuiWindowFlags_NoScrollbar);
+   478→
+   479→    // sol sütun
+   480→    if (s_showCodeTree || s_showToolbox) {
+   481→        ImGui::BeginChild("##left", ImVec2(s_leftW, 0), false);
+   482→        if (s_showCodeTree && s_showToolbox) {
+   483→            ImGui::BeginChild("##leftTop", ImVec2(0, availH * s_leftSplit), true);
+   484→            codetree::Render();
+   485→            ImGui::EndChild();
+   486→            Splitter("##splitLT", &s_leftSplit, 0.15f, 0.8f, false);
+   487→        }
+   488→        if (s_showToolbox) {
+   489→            ImGui::BeginChild("##leftBottom", ImVec2(0, 0), true);
+   490→            toolbox::Render();
+   491→            ImGui::EndChild();
+   492→        } else if (s_showCodeTree) {
+   493→            ImGui::BeginChild("##leftTopFull", ImVec2(0, 0), true);
+   494→            codetree::Render();
+   495→            ImGui::EndChild();
+   496→        }
+   497→        ImGui::EndChild();
+   498→        // yatay yerleşim: sütunlar AYNI SATIRDA — SameLine şart
+   499→        ImGui::SameLine();
+   500→        Splitter("##splitL", &s_leftW, 160.0f, 480.0f, true);
+   501→        ImGui::SameLine();
+   502→    }
+   503→
+   504→    // merkez
+   505→    float centerW = ImGui::GetContentRegionAvail().x - (s_showRightPanel ? s_rightW + 4 : 0);
+   506→    ImGui::BeginChild("##center", ImVec2(centerW, 0), true);
+   507→    canvas::Render();
+   508→    ImGui::EndChild();
+   509→
+   510→    // sağ sütun
+   511→    if (s_showRightPanel) {
+   512→        ImGui::SameLine();
+   513→        Splitter("##splitR", &s_rightW, 240.0f, 600.0f, true);
+   514→        ImGui::SameLine();
+   515→        ImGui::BeginChild("##right", ImVec2(s_rightW, 0), false);
+   516→        ImGui::BeginChild("##rightTop", ImVec2(0, availH * s_rightSplit), true);
+   517→        formlist::Render();
+   518→        ImGui::EndChild();
+   519→        Splitter("##splitRT", &s_rightSplit, 0.12f, 0.75f, false);
+   520→        ImGui::BeginChild("##rightBottom", ImVec2(0, 0), true);
+   521→        props::Render();
+   522→        ImGui::EndChild();
+   523→        ImGui::EndChild();
+   524→    }
+   525→    ImGui::EndChild(); // body
+   526→
+   527→    // durum çubuğu
+   528→    if (s_showStatus) {
+   529→        ImGui::BeginChild("##status", ImVec2(0, STATUS_H), true, ImGuiWindowFlags_NoScrollbar);
+   530→        std::wstring msg = StatusText();
+   531→        if (g_modelDirty) msg = L"(kaydedilmemiş) " + msg;
+   532→        ImGui::TextUnformatted(M2God::W2U(msg).c_str());
+   533→        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 330);
+   534→        ImGui::TextDisabled("Arka uç: %s | Stil: %s | VS: %s | Form: %s",
+   535→                            M2God::W2U(BackendName(LoadBackendConfig())).c_str(),
+   536→                            M2God::W2U(style::NameOf(forms::ThemeId())).c_str(),
+   537→                            vsint::IsConnected() ? M2God::W2U(vsint::Current().projectName).c_str() : "-",
+   538→                            M2God::W2U(forms::ActiveName()).c_str());
+   539→        ImGui::EndChild();
+   540→    }
+   541→
+   542→    ImGui::End();
+   543→    CodePreview();
+   544→}
+   545→
+   546→// ---------------------------------------------------------------------------
+   547→// BAŞLANGIÇ EKRANI — ImGui modal: VS seç / önceki tasarım / VS'siz devam
+   548→// 1 = VS bağlandı, 2 = dosya açıldı, 3 = VS'siz devam, 0 = iptal/çıkış
+   549→// ---------------------------------------------------------------------------
+   550→static int s_welcomeResult = -1;
+   551→static std::wstring s_welcomeFile;
+   552→
+   553→bool RunWelcome(bool* open) {
+   554→    s_welcomeResult = -1;
+   555→    s_welcomeFile.clear();
+   556→    ImGuiViewport* vp = ImGui::GetMainViewport();
+   557→    ImGui::SetNextWindowPos(vp->WorkPos);
+   558→    ImGui::SetNextWindowSize(vp->WorkSize);
+   559→    static ImGuiWindowFlags wf = ImGuiWindowFlags_NoTitleBar |
+   560→                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+   561→                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+   562→    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+   563→    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+   564→    ImGui::Begin("##welcome", nullptr, wf);
+   565→    ImGui::PopStyleVar(2);
+   566→
+   567→    // simgesel başlık bandı
+   568→    ImDrawList* dl = ImGui::GetWindowDrawList();
+   569→    ImVec2 p = ImGui::GetCursorScreenPos();
+   570→    ImVec2 sz = ImGui::GetContentRegionAvail();
+   571→    dl->AddRectFilledMultiColor(p, ImVec2(p.x + sz.x, p.y + 74),
+   572→        ImGui::GetColorU32(ImGuiCol_TitleBgActive), ImGui::GetColorU32(ImGuiCol_TitleBgActive),
+   573→        ImGui::GetColorU32(ImGuiCol_TitleBg), ImGui::GetColorU32(ImGuiCol_TitleBg));
+   574→    dl->AddText(ImVec2(p.x + 24, p.y + 18), ImGui::GetColorU32(ImGuiCol_Text),
+   575→                "M2God ImGui Editor — IMGUI_GOD_SSSTIER");
+   576→    dl->AddText(ImVec2(p.x + 24, p.y + 44), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+   577→                "M2GodWin32 Faz2.13 Win32 UI editorunun ImGui portu — editor de, uretilen formlar da");
+   578→    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 86));
+   579→    ImGui::Dummy(ImVec2(0, 0));
+   580→
+   581→    ImGui::Spacing();
+   582→    ImGui::SetNextItemWidth(520);
+   583→    ImGui::BeginGroup();
+   584→    {
+   585→        ImGui::TextUnformatted("Grafik arka ucu (sonraki açılışta uygulanır — M2GodImGui.cfg):");
+   586→        GfxBackend cur = LoadBackendConfig();
+   587→        const wchar_t* names[5] = { L"D3D9", L"D3D10", L"D3D11", L"D3D12", L"OpenGL3" };
+   588→        for (int b = 0; b < 5; b++) {
+   589→            GfxBackend gb = (GfxBackend)b;
+   590→            bool usable = BackendUsable(gb);
+   591→            ImGui::BeginDisabled(!usable);
+   592→            if (ImGui::RadioButton(M2God::W2U(BackendName(gb)).c_str(), (gb == cur)))
+   593→                SaveBackendConfig(gb);
+   594→            ImGui::EndDisabled();
+   595→            if (!usable) ImGui::SameLine(), ImGui::TextDisabled("(bu derlemede yok)");
+   596→            else if (b < 4) ImGui::SameLine();
+   597→        }
+   598→    }
+   599→    ImGui::EndGroup();
+   600→    ImGui::Separator();
+   601→
+   602→    // 1) VS seçimi
+   603→    ImGui::TextUnformatted("1) Calisan Visual Studio ornegi secip baglanin:");
+   604→    static std::vector<vsint::VSInstance> insts;
+   605→    static bool filled = false;
+   606→    static int sel = -1;
+   607→    if (!filled || ImGui::Button("Yenile")) { insts = vsint::Enumerate(); filled = true; sel = -1; }
+   608→    ImGui::BeginChild("##vslist", ImVec2(-1, 118), true);
+   609→    if (insts.empty() && filled)
+   610→        ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1), "Calisan Visual Studio bulunamadi (devenv.exe).");
+   611→    for (int i = 0; i < (int)insts.size(); i++) {
+   612→        char lbl[256];
+   613→        snprintf(lbl, sizeof(lbl), "%s  [%s]%s",
+   614→                 M2God::W2U(insts[i].title).c_str(), M2God::W2U(insts[i].version).c_str(),
+   615→                 !insts[i].solutionPath.empty() ? "  (cozum bulundu)" : "");
+   616→        if (ImGui::RadioButton(lbl, sel == i)) sel = i;
+   617→    }
+   618→    ImGui::EndChild();
+   619→    if (ImGui::Button("VS'ye Bağlan", ImVec2(180, 34)) && sel >= 0) {
+   620→        std::wstring projPath;
+   621→        if (!insts[sel].solutionPath.empty()) {
+   622→            auto projects = vsint::EnumerateProjectsOfSolution(insts[sel].solutionPath);
+   623→            if (projects.empty())
+   624→                projects = vsint::FindVcxprojsUnder(GetFileDir(insts[sel].solutionPath), 3);
+   625→            if (!projects.empty()) projPath = projects[0];
+   626→        }
+   627→        if (vsint::Connect(insts[sel], projPath)) {
+   628→            vsint::PrepareProjectFiles();
+   629→            s_welcomeResult = 1;
+   630→        } else Status(L"Bağlanamadı: .vcxproj bulunamadı — VS'siz devam edin");
+   631→    }
+   632→    ImGui::SameLine();
+   633→    ImGui::TextDisabled("baglaninca: cozum .vcxproj'lari listelenir, proje secilir,\ntasarim klasore yazilir (oncekini korur)");
+   634→
+   635→    ImGui::Separator();
+   636→
+   637→    // 2) önceki tasarım
+   638→    if (ImGui::Button("Önceki tasarımı aç (.m2god)", ImVec2(-1, 34))) {
+   639→        std::wstring file;
+   640→        if (OpenFileDialog(file, L"M2God Tasarım (*.m2god)\0*.m2god\0", L"m2god")) {
+   641→            s_welcomeFile = file;
+   642→            s_welcomeResult = 2;
+   643→        }
+   644→    }
+   645→
+   646→    // 3) VS'siz
+   647→    if (ImGui::Button("VS'siz boş formla devam et", ImVec2(-1, 34)))
+   648→        s_welcomeResult = 3;
+   649→
+   650→    ImGui::Separator();
+   651→    if (ImGui::Button("Çıkış", ImVec2(120, 28))) s_welcomeResult = 0;
+   652→    ImGui::End();
+   653→
+   654→    if (s_welcomeResult >= 0) {
+   655→        *open = false;
+   656→        if (s_welcomeResult == 2) DoOpen(s_welcomeFile);
+   657→        if (s_welcomeResult == 1 || s_welcomeResult == 3) {
+   658→            // bağlandıysa/VS'siz: mevcut boş tasarım kalır
+   659→        }
+   660→        return true;
+   661→    }
+   662→    return false;
+   663→}
+   664→
+   665→// ---------------------------------------------------------------------------
+   666→// komut satırı: --gensample <dir> | --selftest | --open <file.m2god>
+   667→// ---------------------------------------------------------------------------
+   668→int RunCli(const std::wstring& cmdLine) {
+   669→    std::wstring cl = cmdLine;
+   670→    if (cl.find(L"--gensample") != std::wstring::npos) {
+   671→        std::wstring dir;
+   672→        size_t p = cl.find(L"--gensample");
+   673→        p += wcslen(L"--gensample");
+   674→        while (p < cl.size() && cl[p] == L' ') p++;
+   675→        while (p < cl.size() && cl[p] != L' ') dir += cl[p++];
+   676→        if (dir.empty() || dir[0] == L'-') dir = L"DenemImgui";
+   677→        // örnek tasarım: Form1 + Form2 (ShowForm köprüsü görünsün)
+   678→        forms::InitNew();
+   679→        g_model.formProps[L"Text"] = L"Ana Form";
+   680→        g_model.formW = 480; g_model.formH = 360;
+   681→        g_model.formProps[L"ClientSize"] = L"480, 360";
+   682→        g_model.formProps[L"BackColor"] = L"#23232D";
+   683→        g_model.Add(L"Label", 24, 30)->props[L"Text"] = L"M2God ImGui Editor örnek projesi";
+   684→        if (Ctrl* b = g_model.Add(L"Button", 24, 70)) {
+   685→            b->props[L"Text"] = L"Form2'yi aç";
+   686→            b->w = 130; b->h = 34;
+   687→            b->props[L"Size"] = L"130, 34";
+   688→            b->events[L"Click"] = L"button1_Click";
+   689→        }
+   690→        if (Ctrl* cb = g_model.Add(L"CheckBox", 24, 120)) {
+   691→            cb->props[L"Text"] = L"Seçenek kutusu";
+   692→            cb->events[L"CheckedChanged"] = L"checkBox1_CheckedChanged";
+   693→        }
+   694→        if (Ctrl* s = g_model.Add(L"SliderInt", 24, 160)) {
+   695→            s->props[L"Min"] = L"0"; s->props[L"Max"] = L"100"; s->props[L"Value"] = L"42";
+   696→            s->events[L"ValueChanged"] = L"sliderInt1_ValueChanged";
+   697→        }
+   698→        if (Ctrl* t = g_model.Add(L"Timer", 0, 0)) {
+   699→            t->props[L"Interval"] = L"1000";
+   700→            t->events[L"Tick"] = L"timer1_Tick";
+   701→        }
+   702→        g_model.formEvents[L"Load"] = L"Form1_Load";
+   703→        // Form2
+   704→        forms::AddNew();   // aktif Form2
+   705→        g_model.formProps[L"Text"] = L"İkinci Form";
+   706→        g_model.formW = 360; g_model.formH = 240;
+   707→        g_model.formProps[L"ClientSize"] = L"360, 240";
+   708→        if (Ctrl* l = g_model.Add(L"Label", 20, 24)) l->props[L"Text"] = L"Ben Form2";
+   709→        if (Ctrl* b2 = g_model.Add(L"Button", 20, 60)) {
+   710→            b2->props[L"Text"] = L"Kapat";
+   711→            b2->events[L"Click"] = L"button1_Click";
+   712→        }
+   713→        forms::SwitchTo(0);
+   714→        // handler gövdelerine örnek kod yaz (senkron korumalı akışta korunur):
+   715→        // (üretim + elle dokunma simülasyonu — dosyayı ürettikten sonra gövdeyi değiştir)
+   716→        if (codegen::EmitProject(dir, L"DenemImgui")) {
+   717→                std::wstring cppPath = dir + L"\\DenemImgui\\Form1.cpp";
+   718→            std::string data;
+   719→            if (ReadFileText(cppPath, data)) {
+   720→                std::wstring cpp = Utf8ToWide(data);
+   721→                // button1_Click gövdesine ShowForm yaz
+   722→                std::wstring anchor = L"void button1_Click() {\n    // TODO: button1_Click";
+   723→                if (cpp.find(anchor) != std::wstring::npos)
+   724→                    cpp = ReplaceAll(cpp, anchor,
+   725→                        std::wstring(L"void button1_Click() {\n") +
+   726→                        L"    M2God::ShowForm(L\"Form2\");   // ikinci formu açar");
+   727→                WriteFileText(cppPath, WideToUtf8(cpp));
+   728→            }
+   729→            return 99;   // tamam → çık
+   730→        }
+   731→        return 98;      // hata
+   732→    }
+   733→    if (cl.find(L"--open") != std::wstring::npos) {
+   734→        size_t p = cl.find(L"--open") + wcslen(L"--open");
+   735→        while (p < cl.size() && cl[p] == L' ') p++;
+   736→        std::wstring file;
+   737→        while (p < cl.size() && cl[p] != L' ') file += cl[p++];
+   738→        if (!file.empty() && FileExists(file)) {
+   739→            forms::LoadProject(file);
+   740→            s_projectPath = file;
+   741→        }
+   742→        return 0;   // UI ile devam
+   743→    }
+   744→    return 0;
+   745→}
+   746→
+   747→} // namespace uied
+   748→

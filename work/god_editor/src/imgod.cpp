@@ -214,3 +214,5 @@ bool g_gridVisible = true;
 bool g_snapEnabled = true;
 std::string g_statusText;
 std::string g_exeDirA;
+
+void* g_mainHwnd = nullptr;

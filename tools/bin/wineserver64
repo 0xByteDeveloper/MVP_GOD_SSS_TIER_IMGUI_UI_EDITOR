@@ -1,0 +1,5 @@
+#!/bin/bash
+T=/home/z/my-project/tools
+export LD_LIBRARY_PATH=$T/__debroot/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export LD_PRELOAD=$T/bin/wine_nls_redirect.so${LD_PRELOAD:+:$LD_PRELOAD}
+exec $T/__debroot/usr/lib/wine/wineserver64 "$@"

@@ -1,0 +1,46 @@
+// codegen.h — Form1.h / Form1.cpp kod üretimi (marker tabanlı artımlı senkron)
+#pragma once
+#include "model.h"
+
+namespace codegen {
+
+// Yeni tasarım için Form1.cpp gövdesi üret
+std::wstring GenerateForm1Cpp();
+// Form1.h üret
+std::wstring GenerateForm1H();
+
+// FAZ 2.7 — aktif formun adı (üretim/dosya adları bu adla çeşitlendirilir)
+std::wstring ActiveFormName();
+
+// FAZ 2.7 — aktif formu <Ad>.h / <Ad>.cpp olarak klasöre yaz.
+// withMain=true → wWinMain dahil (başlangıç formu); false → yerine
+// Show<Ad>(owner) ikincil-form fonksiyonu üretilir.
+bool EmitForm(const std::wstring& folder, bool withMain);
+
+// Tam derlenebilir VS2019 projesi klasörüne yaz (aktif form + Global.h)
+// klasör boş olabilir; dönen değer: başarı
+bool EmitProject(const std::wstring& folder);
+
+// Mevcut dosyaya artımlı senkron (marker'ları güncelle, kullanıcı kodunu koru)
+// handlerName boş değilse: eksik handler stub'ını ekle; handlerLine döner (1 tabanlı, 0=eklenemedi)
+int SyncIntoFile(const std::wstring& cppPath, const std::wstring& hPath,
+                 Ctrl* targetCtrl, const std::wstring& eventName, int* handlerLine);
+
+// Sadece handler'ı garanti et ve satırını döndür (VS entegrasyonu için)
+int EnsureHandler(const std::wstring& cppPath, const std::wstring& hPath,
+                  const std::wstring& handlerName, const std::wstring& declLine);
+
+// Faz1.4 "GeneratedForm.cpp" içe aktarma (CreateWindow satırlarından tasarım çıkarır)
+bool ImportLegacyGenerated(const std::wstring& cppPath);
+
+// ID sabiti adı: button1 → IDC_BUTTON1
+std::wstring IdMacroOf(const std::wstring& ctrlName);
+
+// Faz 2.4: Global.h (M2God nesne sarmalayıcı kütüphanesi) üretimi
+// Kullanıcı olay kodlarında WinForms benzeri sözdizimi kullanabilir:
+//   timer1->Enabled = false;  button1->Text = L"Merhaba";
+std::wstring GenerateGlobalH();
+// Global.h sürüm imzası (dosya güncel mi kontrolü için)
+const char* GlobalVersionMark();
+
+} // namespace codegen

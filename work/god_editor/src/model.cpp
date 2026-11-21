@@ -4,6 +4,74 @@
 
 Model g_model;
 
+// --- çoklu seçim -------------------------------------------------------------
+bool Model::IsSelected(const Ctrl* c) const {
+    for (Ctrl* s : selList) if (s == c) return true;
+    return false;
+}
+std::vector<Ctrl*> Model::ValidSelection() const {
+    std::vector<Ctrl*> out;
+    for (Ctrl* s : selList) {
+        for (Ctrl* c : ctrls) if (c == s) { out.push_back(s); break; }
+    }
+    return out;
+}
+void Model::SelectOnly(Ctrl* c) {
+    selList.clear();
+    if (c) selList.push_back(c);
+    selected = c;
+    formSelected = (c == nullptr);
+}
+void Model::SetSelection(const std::vector<Ctrl*>& list) {
+    selList.clear();
+    for (Ctrl* c : list) {
+        bool exists = false;
+        for (Ctrl* x : ctrls) if (x == c) { exists = true; break; }
+        if (exists && !IsSelected(c)) selList.push_back(c);
+    }
+    selected = selList.empty() ? nullptr : selList.back();
+    formSelected = selList.empty();
+}
+void Model::ToggleSel(Ctrl* c) {
+    if (!c) { SelectForm(); return; }
+    if (IsSelected(c)) {
+        selList.erase(std::remove(selList.begin(), selList.end(), c), selList.end());
+        if (selList.empty()) SelectForm();
+        else selected = selList.back();
+    } else {
+        selList.push_back(c);
+        selected = c;
+        formSelected = false;
+    }
+}
+void Model::AddSel(Ctrl* c) {
+    if (!c) return;
+    if (!IsSelected(c)) { selList.push_back(c); selected = c; formSelected = false; }
+}
+void Model::SelectForm() {
+    selList.clear();
+    selected = nullptr;
+    formSelected = true;
+}
+void Model::SelectAll() {
+    selList = ctrls;
+    selected = selList.empty() ? nullptr : selList.back();
+    formSelected = selList.empty();
+}
+void Model::SyncSelection() {
+    bool changed = false;
+    std::vector<Ctrl*> keep;
+    for (Ctrl* s : selList) {
+        bool exists = false;
+        for (Ctrl* c : ctrls) if (c == s) { exists = true; break; }
+        if (exists) keep.push_back(s); else changed = true;
+    }
+    selList.swap(keep);
+    selected = selList.empty() ? nullptr : selList.back();
+    if (selList.empty()) formSelected = true;
+    (void)changed;
+}
+
 std::vector<Ctrl*> Model::ChildrenOf(Ctrl* p) const {
     std::vector<Ctrl*> out;
     for (Ctrl* c : ctrls) if (c->parent == p) out.push_back(c);
@@ -113,10 +181,10 @@ void Model::ClearUndo() { undo.clear(); redo.clear(); }
 
 // --- isim / ekleme ---------------------------------------------------------
 std::string Model::UniqueName(const std::string& type) {
+    // WinForms/M2God adlandırma: tip adının İLK HARFİ KÜÇÜK (button1, radioButton1,
+    // sliderFloat1, inputTextMultiline1...) — özgün tasarımcı davranışıyla birebir.
     std::string low = type;
-    for (auto& c : low) c = (char)tolower((unsigned char)c);
-    if (!low.empty()) low[0] = (char)toupper((unsigned char)low[0]);
-    if (low == "InputTextMultiline") low = "InputTextMultiline";
+    if (!low.empty()) low[0] = (char)tolower((unsigned char)low[0]);
     int n = nameCounters[low] + 1;
     while (FindByName(low + std::to_string(n)) != nullptr) n++;
     nameCounters[low] = n;
@@ -135,8 +203,7 @@ Ctrl* Model::Add(const std::string& type, int x, int y, Ctrl* parent) {
     // varsayılan özellikleri katalogtan doldur
     for (auto& p : def->props) c->props[p.name] = p.def;
     ctrls.push_back(c);
-    selected = c;
-    formSelected = false;
+    SelectOnly(c);
     g_modelDirty = true;
     return c;
 }
@@ -154,7 +221,23 @@ void Model::Delete(Ctrl* c) {
         ctrls.erase(std::remove(ctrls.begin(), ctrls.end(), k), ctrls.end());
         delete k;
     }
-    if (selected == c) { selected = nullptr; formSelected = true; }
+    SyncSelection();
+    g_modelDirty = true;
+}
+void Model::DeleteList(const std::vector<Ctrl*>& list) {
+    // alt kontrollerle birlikte — tek tek Delete() yerine tek geçiş
+    std::set<Ctrl*> kill;
+    std::vector<Ctrl*> stack(list.begin(), list.end());
+    while (!stack.empty()) {
+        Ctrl* cur = stack.back(); stack.pop_back();
+        if (kill.insert(cur).second)
+            for (Ctrl* cc : ctrls) if (cc->parent == cur) stack.push_back(cc);
+    }
+    for (Ctrl* k : kill) {
+        ctrls.erase(std::remove(ctrls.begin(), ctrls.end(), k), ctrls.end());
+        delete k;
+    }
+    SyncSelection();
     g_modelDirty = true;
 }
 Ctrl* Model::Clone(Ctrl* src, int dx, int dy) {
@@ -192,7 +275,7 @@ Ctrl* Model::Clone(Ctrl* src, int dx, int dy) {
         }
     };
     cloneKids(src);
-    selected = c;
+    SelectOnly(c);
     g_modelDirty = true;
     return c;
 }
@@ -224,13 +307,98 @@ void Model::SendToBack(Ctrl* c) {
 void Model::ClearAll() {
     for (Ctrl* c : ctrls) delete c;
     ctrls.clear();
-    selected = nullptr;
-    formSelected = true;
+    SelectForm();
+    clipboardJson.clear();
+    pasteCount = 0;
 }
 std::string Model::DefaultEventOf(const Ctrl* c) const {
     if (!c) return "";
     const ElementDef* def = g_catalog.Find(c->type);
     return def ? def->defaultEvent : "";
+}
+
+// --- pano (Ctrl+C/X/V — M2God davranışı: yeni adlar TİP sayacıyla) -------------
+bool Model::CopySelection() {
+    std::vector<Ctrl*> sel = ValidSelection();
+    if (sel.empty()) return false;
+    // üst-seviye seçimler + bunların alt ağaçları (konteyner seçimi tüm içeriği kopyalar)
+    std::set<Ctrl*> full;
+    std::vector<Ctrl*> stack(sel.begin(), sel.end());
+    while (!stack.empty()) {
+        Ctrl* cur = stack.back(); stack.pop_back();
+        if (full.insert(cur).second)
+            for (Ctrl* cc : ctrls) if (cc->parent == cur) stack.push_back(cc);
+    }
+    json::Value arr = json::Value::MakeArr();
+    for (Ctrl* c : ctrls)
+        if (full.count(c)) arr.Push(CtrlToJson(c));
+    clipboardJson = json::Stringify(arr, false);
+    pasteCount = 0;
+    return true;
+}
+bool Model::CutSelection() {
+    std::vector<Ctrl*> sel = ValidSelection();
+    if (sel.empty()) return false;
+    if (!CopySelection()) return false;
+    DeleteList(sel);
+    return true;
+}
+Ctrl* Model::PasteCtrlFromJson(const json::Value& v, const std::map<std::string, std::string>& nameMap,
+                               Ctrl* parentOverride, int dx, int dy) {
+    Ctrl* c = new Ctrl();
+    CtrlFromJson(c, v, this);
+    // YENİ AD: tip sayacıyla (özgün M2God: denemebutton → button3)
+    std::string newName = UniqueName(c->type);
+    c->name = newName;
+    c->x += dx; c->y += dy;
+    // olay işleyici adlarını yeni ada bağla
+    for (auto& kv : c->events) kv.second = HandlerOf(newName, kv.first);
+    c->props.erase("__parentRef");
+    c->props.erase("Name");
+    c->props["Name"] = newName;
+    if (parentOverride) c->parent = parentOverride;
+    ctrls.push_back(c);
+    return c;
+}
+int Model::PasteClipboard(int dx, int dy) {
+    if (clipboardJson.empty()) return 0;
+    bool ok = false;
+    json::Value arr = json::Parse(clipboardJson, &ok);
+    if (!ok || arr.t != json::Value::ARR) return 0;
+    pasteCount++;
+    // kademeli ofset: her yapıştırma bir ızgara kaydır
+    int ox = dx + (pasteCount - 1) * GRID_SIZE;
+    int oy = dy + (pasteCount - 1) * GRID_SIZE;
+    // 1. geçiş: adları yeniden üret (parent referansları için ad haritası kur)
+    std::map<std::string, std::string> nameMap;   // eski ad → yeni ad
+    std::vector<Ctrl*> fresh;
+    for (auto& cv : arr.arr) {
+        std::string oldName = WideStrToUtf8(cv.Get(L"Name").AsStr());
+        Ctrl* nc = PasteCtrlFromJson(cv, nameMap, nullptr, ox, oy);
+        if (nc) { nameMap[oldName] = nc->name; fresh.push_back(nc); }
+    }
+    // 2. geçiş: parent zincirini geri kur (kaynak parent da kopyalandıysa yeni kopyaya bağla)
+    std::set<Ctrl*> freshSet(fresh.begin(), fresh.end());
+    for (size_t i = 0; i < arr.arr.size() && i < fresh.size(); i++) {
+        json::Value cv = arr.arr[i];
+        std::string pn = WideStrToUtf8(cv.Get(L"Parent").AsStr());
+        if (!pn.empty()) {
+            auto it = nameMap.find(pn);
+            if (it != nameMap.end()) {
+                Ctrl* np = FindByName(it->second);
+                if (np && freshSet.count(np)) fresh[i]->parent = np;
+            } else {
+                fresh[i]->parent = nullptr;   // parent kopyalanmadı → form seviyesi
+            }
+        }
+    }
+    // seçim: yapıştırılan üst seviyeler (alt kontroller ebeveynleriyle taşınır)
+    std::vector<Ctrl*> top;
+    for (Ctrl* nc : fresh)
+        if (!nc->parent || !freshSet.count(nc->parent)) top.push_back(nc);
+    SetSelection(top);
+    g_modelDirty = true;
+    return (int)fresh.size();
 }
 
 // --- JSON ------------------------------------------------------------------

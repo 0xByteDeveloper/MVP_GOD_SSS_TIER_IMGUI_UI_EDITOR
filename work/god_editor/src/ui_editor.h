@@ -31,7 +31,5 @@ std::string SaveDlg(const char* title, const char* filter, const char* defExt);
 
 // editör küreselleri
 extern bool g_showToolbox, g_showCodetree, g_showForms, g_showProps;
-extern std::string g_clipboardJson;      // Ctrl+X/C/V için model JSON'u
-extern Ctrl* g_clipOwner;
 
 } // namespace ui_editor

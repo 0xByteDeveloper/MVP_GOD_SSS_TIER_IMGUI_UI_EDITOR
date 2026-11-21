@@ -1,0 +1,26 @@
+# GÖRSEL DOĞRULAMA — Panel + içine nesneler + renkler + bağlam menüsü açık
+add Panel 30 30
+set panel1 Rounding "6"
+set panel1 BgColor "#20262E"
+set panel1 Width "360"
+set panel1 Height "260"
+arm Button
+wait 5
+click 420 320
+wait 8
+set button1 Text "Panel İçi Buton"
+set button1 ButtonColor "#D25410"
+set button1 ButtonHoverColor "#EE7A30"
+arm SliderFloat
+wait 5
+click 420 380
+wait 8
+add Checkbox 30 420
+add Combo 30 460
+add ProgressBar 30 500
+set progressBar1 Value "0.7"
+wait 40
+save state_visual.imgod
+rclickobj button1
+wait 600
+quit

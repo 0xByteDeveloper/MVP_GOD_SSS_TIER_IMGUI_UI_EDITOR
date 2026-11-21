@@ -1,0 +1,12 @@
+#!/bin/sh -e
+# konumdan bağımsız wineserver başlatıcı (kullanıcı ağacı / debroot için)
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if test -x "$dir/wineserver64"; then
+    exec "$dir/wineserver64" -p0 "$@"
+fi
+if test -x "$dir/wineserver32"; then
+    exec "$dir/wineserver32" -p0 "$@"
+fi
+echo "error: unable to find wineserver executable." >&2
+echo "wine32 and/or wine64 must be installed." >&2
+exit 1

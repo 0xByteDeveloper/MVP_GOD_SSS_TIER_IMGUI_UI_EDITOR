@@ -16,6 +16,21 @@
 
 //---- Define assertion handler. Defaults to calling assert().
 // If your macro uses multiple statements, make sure is enclosed in a 'do { .. } while (0)' block so it can be used as a single statement.
+// ---- GOD SSS TIER teşhis: assert'te geri izleme (askeri düzey teşhis) ----
+#ifdef IMGUI_ASSERT_BT
+#include <cstdio>
+#include <cstdlib>
+#include <windows.h>
+static inline void ImAssertBt(const char* f, int l) {
+    fprintf(stderr, "IMASSERT-HIT %s:%d\n", f, l);
+    void* bt[24];
+    unsigned short n = (unsigned short)CaptureStackBackTrace(0, 24, bt, NULL);
+    for (unsigned short i = 0; i < n; i++) fprintf(stderr, "  bt[%02d] %p\n", i, bt[i]);
+    fflush(stderr);
+    abort();
+}
+#define IM_ASSERT(_EXPR)  do { if (!(_EXPR)) ImAssertBt(__FILE__, __LINE__); } while(0)
+#endif
 //#define IM_ASSERT(_EXPR)  MyAssert(_EXPR)
 //#define IM_ASSERT(_EXPR)  ((void)(_EXPR))     // Disable asserts
 
