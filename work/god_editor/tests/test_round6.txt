@@ -1,0 +1,73 @@
+# test_round6.txt — 6. TUR ETKİLEŞİMLERİ
+# Kullanıcı hataları:
+#   1) "textboxu sağa sola büyütüp küçültebiliyorum da yukarı aşağı yapamıyorum"
+#   2) "nesneleri groupboxun içine koyamıyorum... nesneler onun içinde değilmiş"
+#   3) "groupboxu küçülttüğümde buttonu hâlâ görmeye devam ediyorum"
+#   4) "yanındaki stringleri (Yazı/Seçenek) bi ayar ile kapatabilelim"
+snap off
+
+# ---- (2) GroupBox sürükle-bırak reparent ----
+add GroupBox 40 40
+set groupBox1 Width 320
+set groupBox1 Height 200
+wait 6
+add Button 240 80
+wait 6
+expectparent button1 -
+statusfile state_r6_p1.txt
+dropobj button1 groupBox1
+wait 10
+expectparent button1 groupBox1
+statusfile state_r6_p2.txt
+
+# ---- taşıyıcı hareketi ÇOCUĞU DA TAŞIR ----
+# (önce butonu grup merkezinin DIŞINA kaydır — grup merkezini gövde-sürükleme
+#  için boşalt; buton grup içinde kalır)
+dragmove button1 -60 -50
+wait 10
+objpos button1 state_r6pos.txt
+dragmove groupBox1 32 24
+wait 10
+objpos button1 state_r6pos.txt
+expectparent button1 groupBox1
+
+# ---- (3) groupbox küçült → çocuk KIRPILIR (parent KORUNUR) ----
+select groupBox1
+dragobj groupBox1 -260 0
+wait 8
+expectparent button1 groupBox1
+statusfile state_r6_p3.txt
+
+# ---- (1) TextBox DİKEY boyut (alt tutamaç) ----
+add TextBox 60 300
+wait 6
+objsize textBox1 state_r6sz.txt
+dragobjv textBox1 24
+wait 8
+objsize textBox1 state_r6sz.txt
+
+# ---- (4) Etiket gizleme: checkbox genişliği KÜÇÜLÜR (yan metin kalkar) ----
+add Checkbox 60 360
+wait 6
+objsize checkbox1 state_r6sz.txt
+hidelabels on
+wait 8
+objsize checkbox1 state_r6sz.txt
+hidelabels off
+wait 4
+
+# ---- groupbox büyüt + DIŞINA bırakınca FORMA döner ----
+select groupBox1
+dragobj groupBox1 300 0
+wait 6
+dropform button1 380 300
+wait 8
+expectparent button1 -
+statusfile state_r6_p4.txt
+
+# ---- geri içine bırak + KAYDET (parent'lı model) ----
+dropform button1 100 100
+wait 10
+expectparent button1 groupBox1
+save state_r6.imgod
+quit

@@ -45,7 +45,9 @@ int main(int argc, char** argv) {
     typedef struct { unsigned short type; unsigned int size, r1, off; } __attribute__((packed)) FH;
     typedef struct { unsigned int hs, w, h; unsigned short pl, bpp; unsigned int comp, imgsz, xppm, yppm, clr, clrImp; } __attribute__((packed)) IH;
     FH fh = { 0x4D42, 54 + (unsigned)(stride * h), 0, 54 };
-    IH ih = { 40, (unsigned)w, (unsigned)h, 1, 24, 0, (unsigned)(stride * h), 2835, 2835, 0, 0 };
+    // DÜZELTİLDİ: satırlar X'ten ÜSTTEN-AŞAĞI gelir → BMP başlığında NEGATİF
+    // yükseklik (üstten-aşağı BMP) gerekir; pozitif dikey TERS gösteriyordu.
+    IH ih = { 40, (unsigned)w, (unsigned)(-(int)h), 1, 24, 0, (unsigned)(stride * h), 2835, 2835, 0, 0 };
     FILE* f = fopen(argv[1], "wb");
     if (!f) { fprintf(stderr, "dosya acilamadi\n"); return 4; }
     fwrite(&fh, 1, sizeof fh, f); fwrite(&ih, 1, sizeof ih, f); fwrite(px, 1, (size_t)stride * h, f);

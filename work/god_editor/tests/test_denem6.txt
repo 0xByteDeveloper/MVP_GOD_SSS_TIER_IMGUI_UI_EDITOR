@@ -1,0 +1,77 @@
+# test_denem6.txt — DenemImgui ÖRNEK PROJESİ (6. tur özellikleriyle)
+# TextBox dikey boyut + GroupBox çocuk yerleşimi + Panel + tüm aile
+snap off
+form 640 560
+
+# ---- sol: GroupBox içinde TextBox (dikey 44) + Buton + Checkbox ----
+add GroupBox 24 40
+set groupBox1 Width 300
+set groupBox1 Height 200
+set groupBox1 Text "Giriş Alanı"
+wait 6
+add TextBox 40 60
+select textBox1
+wait 4
+dragobjv textBox1 25
+wait 8
+set textBox1 Value "Merhaba ImGui"
+wait 4
+dropform textBox1 60 70
+wait 10
+add Button 180 60
+set button1 Text "Gönder"
+wait 4
+dropform button1 60 120
+wait 10
+add Checkbox 40 160
+set checkbox1 Text "Beni hatırla"
+wait 4
+dropform checkbox1 60 190
+wait 10
+
+# ---- sağ: Panel içinde Slider (dikey 38) + Combo (dikey 34) ----
+add Panel 360 40
+set panel1 Width 250
+set panel1 Height 220
+set panel1 Border True
+wait 6
+add SliderFloat 380 70
+set sliderFloat1 Text "Hız"
+set sliderFloat1 Width 150
+select sliderFloat1
+wait 4
+dragobjv sliderFloat1 19
+wait 8
+add Combo 380 130
+set combo1 Width 150
+select combo1
+wait 4
+dragobjv combo1 15
+wait 8
+dropform sliderFloat1 400 100
+wait 10
+dropform combo1 400 190
+wait 10
+
+# ---- alt: TextBoxMultiline + ProgressBar + Separator ----
+add TextBoxMultiline 24 280
+set textBoxMultiline1 Width 280
+set textBoxMultiline1 Height 90
+wait 4
+add ProgressBar 24 400
+set progressBar1 Width 280
+set progressBar1 Height 22
+wait 4
+add Separator 360 300
+set separator1 Width 250
+set separator1 Height 4
+wait 4
+add Button 380 380
+set button2 Text "Temizle"
+wait 6
+
+projname DenemImgui
+genbackend 0
+gen /home/z/my-project/work/DenemImgui_final
+wait 60
+quit

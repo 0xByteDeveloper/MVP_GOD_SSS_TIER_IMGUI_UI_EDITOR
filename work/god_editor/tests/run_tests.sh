@@ -17,12 +17,16 @@ trap 'kill $XPID 2>/dev/null' EXIT
 sleep 1.5
 
 run_editor() {   # <selftest> <saniye>
-    (cd Bin && rm -f state_*.imgod state_*.txt && "$WINE" ./imgod_editor_x64.exe --selftest "$1" > /tmp/wine_test.log 2>&1) &
+    # 6. TUR DÜZELTİLDİ: TEST 12'nin MinGW derleme kontrolü `cd` yapıp kabuğun
+    # çalışma dizinini değiştiriyordu → sonraki testler Bin'e giremiyordu
+    # ("failed to open ./imgod_editor_x64.exe"). Artık KESİN yol kullanılır.
+    (cd /home/z/my-project/work/god_editor/Bin && rm -f state_*.imgod state_*.txt && "$WINE" ./imgod_editor_x64.exe --selftest "$1" > /tmp/wine_test.log 2>&1) &
     local pid=$!
     sleep "$2"
     kill $pid 2>/dev/null; sleep 0.7
     "$WINE" -k 2>/dev/null; /home/z/my-project/tools/bin/wineserver64 -k 2>/dev/null
     sleep 0.5
+    cd /home/z/my-project/work/god_editor
 }
 
 check() {  # <ad> <koşul-komutu>
@@ -196,6 +200,48 @@ check "Separator W×H (IGOD::Separator + Size)" 'grep -q "IGOD::Separator separa
 check "SeparatorText W + RadioButton W+H + Header W" 'grep -q "separatorText1.Width = 240;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp && grep -q "radioButton1.Height = 30;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp && grep -q "collapsingHeader1.Width = 240;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
 check "Global.h: FitTextToWidth + yeni yapılar" 'grep -q "FitTextToWidth" /home/z/my-project/work/gen5/DenemImgui5/Global.h && grep -q "struct Separator {" /home/z/my-project/work/gen5/DenemImgui5/Global.h && grep -q "struct BulletText {" /home/z/my-project/work/gen5/DenemImgui5/Global.h'
 check "MinGW DERLEMESİ: üretilen proje derlendi (exe oluştu)" 'cd /home/z/my-project/work/gen5/DenemImgui5 && CXX=/home/z/my-project/tools/__debroot/usr/bin/x86_64-w64-mingw32-g++-posix PATH=/home/z/my-project/tools/__debroot/usr/bin:$PATH bash build_mingw.sh >/tmp/gen5build.log 2>&1 && [ -s Bin/DenemImgui5.exe ]'
+
+echo "=== TEST 13: 6. TUR ETKİLEŞİMLER (GroupBox reparent/kırpma + TextBox dikey + etiket gizleme) ==="
+run_editor ../tests/test_round6.txt 30
+check "kayıt oluştu (r6)" '[ -s Bin/state_r6.imgod ]'
+check "Groupbox DIŞINDA başladı (PARENTOK button1->-)" 'grep -q "PARENTOK button1->-" Bin/state_r6_p1.txt'
+check "6. TUR #2: SÜRÜKLE-BIRAK GroupBox İÇİNE (PARENTOK button1->groupBox1)" 'grep -q "PARENTOK button1->groupBox1" Bin/state_r6_p2.txt'
+check "taşıyıcı hareketi ÇOCUĞU DA TAŞIR (+32,+24)" 'python3 -c "
+import re;t=open(\"Bin/state_r6pos.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"button1:@(-?\d+),(-?\d+)\",t)]
+exit(0 if len(v)>=2 and 30<=v[1][0]-v[0][0]<=34 and 22<=v[1][1]-v[0][1]<=26 else 1)"'
+check "groupbox KÜÇÜLTÜLÜNCE çocuk KIRPILIR ama parent KORUNUR" 'grep -q "PARENTOK button1->groupBox1" Bin/state_r6_p3.txt'
+check "TextBox DİKEY boyut +24 GÖRSEL (alt tutamaç — 6. tur #1)" 'python3 -c "
+import re;t=open(\"Bin/state_r6sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"textBox1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=2 and 20<=v[1][1]-v[0][1]<=28 else 1)"'
+check "etiket gizleme: checkbox genişliği KÜÇÜLDÜ (yan metin kalktı — 6. tur #4)" 'python3 -c "
+import re;t=open(\"Bin/state_r6sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"checkbox1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=2 and v[1][0]<=40 and v[0][0]-v[1][0]>=30 else 1)"'
+check "groupbox DIŞINA bırakınca FORMA döndü (PARENTOK button1->-)" 'grep -q "PARENTOK button1->-" Bin/state_r6_p4.txt'
+check "modelde: button1 parent=groupBox1 KAYITLI + koordinat çevrimi (28,36)" 'python3 -c "
+import json;d=json.load(open(\"Bin/state_r6.imgod\"))
+cs=d[\"Forms\"][0][\"Ctrls\"]
+b=[c for c in cs if c[\"Name\"]==\"button1\"][0]
+exit(0 if b.get(\"Parent\")==\"groupBox1\" and b[\"X\"]==28 and b[\"Y\"]==36 else 1)"'
+
+echo "=== TEST 14: 6. TUR ÜRETİM (TextBox H + etiketsiz ##ad + PushFrameHeight) + MinGW ==="
+rm -rf /home/z/my-project/work/gen6
+run_editor ../tests/test_gen6.txt 65
+check "üretim oluştu (r6)" '[ -s /home/z/my-project/work/gen6/DenemR6/Form1.cpp ]'
+check "Global.h: PushFrameHeight yardımcısı VAR (çerçeve yükseklik ölçekleme)" 'grep -q "inline bool PushFrameHeight" /home/z/my-project/work/gen6/DenemR6/Global.h'
+check "IGOD::InputText Height üyesi VAR" 'grep -q "float Height = 0;" /home/z/my-project/work/gen6/DenemR6/Global.h'
+check "textBox1 yüksekliği bağlandı (19+20 → 39)" 'grep -q "textBox1.Height = 39;" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
+check "sliderFloat1/combo1 yüksekliği bağlandı (37/35)" 'grep -q "sliderFloat1.Height = 37;" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && grep -q "combo1.Height = 35;" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
+check "ETİKETSİZ üretim: u8\"##textBox1\" (Yazı yok — 6. tur #4)" 'grep -q "u8\"##textBox1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && ! grep -q "Yazı##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
+check "ETİKETSİZ üretim: u8\"##checkbox1\" + u8\"##sliderFloat1\" + u8\"##combo1\"" 'grep -q "u8\"##checkbox1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && grep -q "u8\"##sliderFloat1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && grep -q "u8\"##combo1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
+check "Seçenek/Değer/Seçim yan metinleri YOK (gizli üretim)" '! grep -q "Se\303\247enek##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && ! grep -q "De\304\237er##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && ! grep -q "Se\303\247im##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
+check "GroupBox çocuk hiyerarşisi: textBox1 Begin/End İÇİNDE" 'python3 -c "
+import re;t=open(\"/home/z/my-project/work/gen6/DenemR6/Form1.cpp\",encoding=\"utf-8\").read()
+b=t.find(\"groupBox1.Begin();\"); e=t.find(\"groupBox1.End();\"); i=t.find(\"textBox1.Draw()\")
+exit(0 if 0<=b<i<=e else 1)"'
+check "MinGW DERLEMESİ: üretilen r6 projesi derlendi" 'cd /home/z/my-project/work/gen6/DenemR6 && CXX=/home/z/my-project/tools/__debroot/usr/bin/x86_64-w64-mingw32-g++-posix PATH=/home/z/my-project/tools/__debroot/usr/bin:$PATH bash build_mingw.sh >/tmp/gen6build.log 2>&1 && [ -s Bin/DenemR6.exe ]'
 
 echo ""
 echo "=========================================="

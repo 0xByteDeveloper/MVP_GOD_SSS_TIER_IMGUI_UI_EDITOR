@@ -1,0 +1,62 @@
+# test_visual6.txt — 6. TUR GÖRSEL DOĞRULAMA (ekran görüntüleri)
+snap off
+form 640 520
+
+# GroupBox + içinde buton + kırpılmış buton (taşıyıcı küçük)
+add GroupBox 30 40
+set groupBox1 Width 260
+set groupBox1 Height 150
+wait 6
+add Button 60 70
+wait 6
+dropobj button1 groupBox1
+wait 10
+add Button 180 120
+wait 6
+dropobj button2 groupBox1
+wait 10
+# buton2'yi taşıyıcının SAĞ kenarına taşı (kısmen DIŞARIDA → kırpılır)
+dragmove button2 60 30
+wait 10
+
+# TextBox dikey büyütülmüş + etiketli
+add TextBox 320 60
+wait 6
+select textBox1
+wait 4
+dragobjv textBox1 26
+wait 8
+
+# Slider dikey büyütülmüş
+add SliderFloat 320 150
+wait 6
+select sliderFloat1
+wait 4
+dragobjv sliderFloat1 20
+wait 8
+
+# Checkbox'ler (etiketli)
+add Checkbox 320 240
+add Checkbox 320 280
+set checkbox2 Text "Seçenek metni uzunca"
+wait 8
+
+screenshot state_visual6a.bmp
+wait 6
+
+# ETİKETLERİ GİZLE — yan metinler kalkar
+hidelabels on
+wait 12
+screenshot state_visual6b.bmp
+wait 6
+hidelabels off
+wait 4
+
+# groupbox'u TAŞI — içindekiler de taşır (klip korunur)
+dragmove groupBox1 40 60
+wait 10
+screenshot state_visual6c.bmp
+wait 4
+
+save state_visual6.imgod
+quit

@@ -212,6 +212,8 @@ const char* BackendIdA(EditorBackend b) {
 bool g_modelDirty = false;
 bool g_gridVisible = true;
 bool g_snapEnabled = true;
+bool g_hideLabels = false;   // 6. TUR: yan etiketler varsayılan GÖRÜNÜR (M2God/VS paritesi);
+                            // Görünüm menüsünden veya araç çubuğundan kapatılabilir
 std::string g_statusText;
 std::string g_exeDirA;
 

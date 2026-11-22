@@ -229,6 +229,20 @@ void DrawPropsPanel(ImVec2 min, ImVec2 max) {
                         else { m.Primary()->x = atoi(pos.c_str()); }
                         g_modelDirty = true;
                     }
+                    // 6. TUR: EBVEYN satırı (konteyner içi yerleşim görünür — kullanıcı:
+                    // "nesneler groupboxun içinde değilmiş" şikayetinin teşhiri için):
+                    // taşıyıcıya sürükleyince/yerleştirince burada görünür.
+                    if (m.Primary()->parent) {
+                        std::string pn = m.Primary()->parent->name + " (" + m.Primary()->parent->type + ")";
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted("Ebeveyn");
+                        ImGui::TableNextColumn();
+                        ImGui::TextDisabled("%s", pn.c_str());
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Bu nesne %s i\303\247inde — ta\305\237\304\261y\304\261c\304\261y\304\261la birlikte hareket eder, k\304\261rp\304\261l\304\261r",
+                                             m.Primary()->parent->name.c_str());
+                    }
                     // BOYUT SATIRI — TİP YETENEĞİNE GÖRE (kullanıcı hatası: "görselde
                     // küçülmüyordu ama özelliklerde Boyut değişiyordu" — hayalet
                     // boyut kökten giderildi):FULL=düzenlenebilir w,h; W=yalnız

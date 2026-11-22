@@ -100,8 +100,12 @@ static void Bind(EmitCtx& ctx, const Ctrl* c, const std::string& line) {
     ctx.initlist << "    " << c->name << "." << line << ";\n";
 }
 // "Seçenek##checkbox1" biçimli benzersiz etiket (görünen metin + ID soneki)
+// 6. TUR: "Etiketleri Gizle" ayarı açıkken yan-metinli tipler yalnız "##ad"
+// yazar — üretilen uygulama da editördeki gibi ETİKETSİZ görünür (WYSIWYG).
 static std::string ULabel(const Ctrl* c, const char* textProp, const char* defText) {
-    return "u8\"" + EscCppUtf8(StrOf(c, textProp, defText)) + "##" + c->name + "\"";
+    std::string t = StrOf(c, textProp, defText);
+    if (g_hideLabels && HasAdjacentLabel(c->type)) t.clear();
+    return "u8\"" + EscCppUtf8(t) + "##" + c->name + "\"";
 }
 static std::string UPlain(const std::string& s) {   // düz u8 sabiti
     return "u8\"" + EscCppUtf8(s) + "\"";
@@ -195,6 +199,10 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
         // (Multiline hariç — onun Size(w,h) zaten bağlı)
         if (t != "InputTextMultiline" && t != "TextBoxMultiline")
             Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
+        // 6. TUR: çerçeve ailesi — YÜKSEKLİK de tasarım değerinden (canvas ↔ IGOD
+        // aynı FramePadding ölçeklemesi; "yukarı aşağı büyütüp küçültme" artık mümkün)
+        if (t != "InputTextMultiline" && t != "TextBoxMultiline")
+            Bind(ctx, c, "Height = " + std::to_string(c->h > 0 ? c->h : 0));
         std::string defEv = (t == "InputText" || t == "InputTextMultiline" || t == "TextBox" || t == "TextBoxMultiline") ? "TextChanged" : "ValueChanged";
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, defEv) << "();\n";
@@ -219,8 +227,11 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
             Bind(ctx, c, "HeightItems = " + std::to_string((int)strtol(NumOf(c, "HeightItems", "5").c_str(), nullptr, 10)));
         // BOYUT (WYSIWYG): Combo genişliği SetNextItemWidth ile; ListBox TAM boyutu
         // (w,h) BeginListBox'a — canvas'la birebir aynı değerler.
-        if (t == "Combo")
+        if (t == "Combo") {
             Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
+            // 6. TUR: yükseklik de tasarım değerinden (FramePadding ölçekleme)
+            Bind(ctx, c, "Height = " + std::to_string(c->h > 0 ? c->h : 0));
+        }
         if (t == "ListBox")
             Bind(ctx, c, "Size = " + Vec2Arg(c->w, c->h));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
@@ -611,6 +622,20 @@ inline std::string FitTextToWidth(const std::string& text, float avail) {
     return out + ell;
 }
 
+// —— 6. TUR ortak yardımcı —————————————————————————————————————————————
+// Tek-satır çerçeve ailesi yüksekliği: FramePadding.y = (h - FontSize) * 0.5
+// → çerçeve satırı h olur. Editör canvas'ı AYNI dönüşümü uygular (WYSIWYG):
+// TextBox/InputInt/InputFloat/Combo/Slider*/Drag* + Checkbox/RadioButton.
+// h <= 0 ya da fontSize'den küçükse push YOK (ImGui varsayılan yükseklik).
+inline bool PushFrameHeight(float h) {
+    if (h <= 0) return false;
+    float padY = (h - ImGui::GetFontSize()) * 0.5f;
+    if (padY < 0.0f) return false;
+    ImVec2 fp = ImGui::GetStyle().FramePadding;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fp.x, padY));
+    return true;
+}
+
 // —— nesne sarmalayıcıları ---------------------------------------------------
 struct Button {
     std::string Text;  ImVec2 SizeArg = ImVec2(0, 0);
@@ -639,15 +664,7 @@ struct Checkbox {
         bool prev = Checked;
         // BOYUT (WYSIWYG): yükseklik → FramePadding ölçekleme (kare + satır büyür);
         // genişlik → etiket sığdırma. Editör canvas'ı birebir aynı yapar.
-        bool padPush = false;
-        if (Height > 0) {
-            float padY = (Height - ImGui::GetFontSize()) * 0.5f;
-            if (padY >= 0.0f) {
-                ImVec2 fp = ImGui::GetStyle().FramePadding;
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fp.x, padY));
-                padPush = true;
-            }
-        }
+        bool padPush = PushFrameHeight(Height);
         float square = ImGui::GetFrameHeight();
         std::string shown = Text;
         if (Width > 0)
@@ -661,15 +678,7 @@ struct RadioButton {
     std::string Text;  bool Active = false;
     float Width = 0, Height = 0;   // tasarım boyutu (WYSIWYG)
     bool Draw() {
-        bool padPush = false;
-        if (Height > 0) {
-            float padY = (Height - ImGui::GetFontSize()) * 0.5f;
-            if (padY >= 0.0f) {
-                ImVec2 fp = ImGui::GetStyle().FramePadding;
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fp.x, padY));
-                padPush = true;
-            }
-        }
+        bool padPush = PushFrameHeight(Height);
         float square = ImGui::GetFrameHeight();
         std::string shown = Text;
         if (Width > 0)
@@ -681,42 +690,57 @@ struct RadioButton {
 };
 struct SliderFloat {
     std::string Text = "Değer";  float Value = 0, Min = 0, Max = 100;
-    std::string Format = "%.1f";  float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    std::string Format = "%.1f";  float Width = 0, Height = 0;   // >0: tasarımdan boyut (WYSIWYG)
     SliderFloat() {}
     SliderFloat(const std::string& t, float v, float mn, float mx) : Text(t), Value(v), Min(mn), Max(mx) {}
     bool Draw() {
+        // 6. TUR: yükseklik FramePadding ölçeklemesi — editör canvas'ı aynı
+        // dönüşümü uygular (WYSIWYG). IGOD::PushFrameHeight yardımcısı ortak.
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
-        return ImGui::SliderFloat(Text.c_str(), &Value, Min, Max, Format.c_str());
+        bool ch = ImGui::SliderFloat(Text.c_str(), &Value, Min, Max, Format.c_str());
+        if (padPush) ImGui::PopStyleVar();
+        return ch;
     }
 };
 struct SliderInt {
     std::string Text = "Değer";  int Value = 0, Min = 0, Max = 100;
-    std::string Format = "%d";  float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    std::string Format = "%d";  float Width = 0, Height = 0;   // >0: tasarımdan boyut
     bool Draw() {
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
-        return ImGui::SliderInt(Text.c_str(), &Value, Min, Max, Format.c_str());
+        bool ch = ImGui::SliderInt(Text.c_str(), &Value, Min, Max, Format.c_str());
+        if (padPush) ImGui::PopStyleVar();
+        return ch;
     }
 };
 struct DragFloat {
     std::string Text = "Değer";  float Value = 0, Min = 0, Max = 100, Speed = 1;
-    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    float Width = 0, Height = 0;   // >0: tasarımdan boyut (WYSIWYG)
     bool Draw() {
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
-        return ImGui::DragFloat(Text.c_str(), &Value, Speed, Min, Max);
+        bool ch = ImGui::DragFloat(Text.c_str(), &Value, Speed, Min, Max);
+        if (padPush) ImGui::PopStyleVar();
+        return ch;
     }
 };
 struct DragInt {
     std::string Text = "Değer";  int Value = 0, Min = 0, Max = 100; float Speed = 1;
-    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    float Width = 0, Height = 0;   // >0: tasarımdan boyut
     bool Draw() {
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
-        return ImGui::DragInt(Text.c_str(), &Value, Speed, Min, Max);
+        bool ch = ImGui::DragInt(Text.c_str(), &Value, Speed, Min, Max);
+        if (padPush) ImGui::PopStyleVar();
+        return ch;
     }
 };
 struct InputText {
     std::string Text = "Yazı";   std::string Value;  std::string Hint;
     bool Password = false;  bool ReadOnly = false;
     float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    float Height = 0;  // 6. TUR: >0: tasarımdan yükseklik — FramePadding ölçekleme
     char Buf[512] = {};  bool InitBuf = false;  bool EnterPressed = false;
     InputText() {}
     bool Draw() {
@@ -724,8 +748,10 @@ struct InputText {
         ImGuiInputTextFlags fl = 0;
         if (Password) fl |= ImGuiInputTextFlags_Password;
         if (ReadOnly) fl |= ImGuiInputTextFlags_ReadOnly;
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
         bool ch = ImGui::InputText(Text.c_str(), Buf, sizeof Buf, fl);
+        if (padPush) ImGui::PopStyleVar();
         if (!Hint.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", Hint.c_str());
         EnterPressed = ImGui::IsItemEdited() && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsItemDeactivated());
         if (ch) Value = Buf;
@@ -745,37 +771,46 @@ struct InputTextMultiline {
 };
 struct InputInt {
     std::string Text = "Sayı";  int Value = 0, Step = 1;
-    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    float Width = 0, Height = 0;   // >0: tasarımdan boyut (WYSIWYG)
     bool Draw() {
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
-        return ImGui::InputInt(Text.c_str(), &Value, Step);
+        bool ch = ImGui::InputInt(Text.c_str(), &Value, Step);
+        if (padPush) ImGui::PopStyleVar();
+        return ch;
     }
 };
 struct InputFloat {
     std::string Text = "Sayı";  float Value = 0; float Step = 1;
-    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG)
+    float Width = 0, Height = 0;   // >0: tasarımdan boyut (WYSIWYG)
     bool Draw() {
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
-        return ImGui::InputFloat(Text.c_str(), &Value, Step);
+        bool ch = ImGui::InputFloat(Text.c_str(), &Value, Step);
+        if (padPush) ImGui::PopStyleVar();
+        return ch;
     }
 };
 struct Combo {
     std::string Text = "Seçim";  std::vector<std::string> Items;  int Selected = 0;
-    float Width = 0;   // >0: tasarımdan genişlik (WYSIWYG — SetNextItemWidth)
+    float Width = 0, Height = 0;   // >0: tasarımdan boyut (WYSIWYG — SetNextItemWidth + FramePadding)
     Combo() {}
     Combo(const std::vector<std::string>& it) : Items(it) {}
     bool Draw() {
         const char* cur = (Selected >= 0 && Selected < (int)Items.size()) ? Items[Selected].c_str() : "";
+        bool padPush = PushFrameHeight(Height);
         if (Width > 0) ImGui::SetNextItemWidth(Width);
+        bool ch = false;
         if (ImGui::BeginCombo(Text.c_str(), cur)) {
             for (int i = 0; i < (int)Items.size(); i++) {
                 bool sel = (i == Selected);
-                if (ImGui::Selectable(Items[i].c_str(), sel) && !sel) { Selected = i; ImGui::EndCombo(); return true; }
+                if (ImGui::Selectable(Items[i].c_str(), sel) && !sel) { Selected = i; ImGui::EndCombo(); if (padPush) ImGui::PopStyleVar(); return true; }
                 if (sel) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
         }
-        return false;
+        if (padPush) ImGui::PopStyleVar();
+        return ch;
     }
 };
 struct ListBox {
@@ -869,20 +904,27 @@ struct ChildWindow {
 };
 struct GroupBox {
     std::string Text = "Grup";  std::string Id;  ImVec2 Size = ImVec2(320, 160);
+    // 6. TUR DÜZELTİLDİ: çerçeve/başlık dikdörtgeni BEGIN'de (child penceresinden)
+    // alınır. Eski kod çocuklar çizildikten SONRA GetItemRectMin alıyordu → SON
+    // ÇOCUĞUN dikdörtgeni geliyordu → çerçeve/başlık yanlış yerde (başlık
+    // son çocuğun ÜZERİNE çizilirdy). Editör canvas'ı aynı düzeltmeyi içerir.
+    ImVec2 RectMin = ImVec2(0, 0), RectMax = ImVec2(0, 0);
     bool Begin() {
         // WinForms GroupBox görünümü: çerçeveli child + üst kenarda başlık
         // Id boşsa Text+"_grp" — editör üretimi benzersiz Id bağlar
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
         ImGui::BeginChild(Id.empty() ? (Text + "_grp").c_str() : (Id + "_grp").c_str(), Size, ImGuiChildFlags_Borders);
+        RectMin = ImGui::GetWindowPos();
+        ImVec2 wsz = ImGui::GetWindowSize();
+        RectMax = ImVec2(RectMin.x + wsz.x, RectMin.y + wsz.y);
         return true;
     }
     void End() {
-        // çocuklar kapandı: çerçeve + başlık çiz (GetItemRectMin/Max child'in)
-        ImVec2 rmin = ImGui::GetItemRectMin();
-        ImVec2 rmax = ImGui::GetItemRectMax();
+        // çocuklar kapandı: çerçeve + başlık çiz (Begin'de alınan child dikdörtgesi)
         ImGui::EndChild();
         ImGui::PopStyleVar();
         ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 rmin = RectMin, rmax = RectMax;
         dl->AddRect(rmin, rmax, ImGui::GetColorU32(ImGuiCol_Border), 4.0f);
         ImVec2 ts = ImGui::CalcTextSize(Text.c_str());
         ImVec2 lp = ImVec2(rmin.x + 8, rmin.y - ts.y * 0.5f);

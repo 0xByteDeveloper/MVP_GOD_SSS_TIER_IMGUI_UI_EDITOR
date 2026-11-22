@@ -69,6 +69,19 @@ bool ToolbarButton(const char* label, const char* desc, bool enabled) {
     ImGui::EndDisabled();
     return c;
 }
+// 6. TUR (gizli hata tespiti): eski araç çubuğu `SameLine()+Separator()`
+// kullanıyordu — Separator YATAY satır sonlandırıcıdır → düğmeler satırlara
+// SARIP 30px'lik araç çubuğundan taşıp kılıyordu (Geri'den sonrası görünmez).
+// Artık dikey çizgi draw-list ile çizilir + Dummy yer tutar → satır AKICI kalır.
+static void ToolbarSep() {
+    ImGui::SameLine();
+    ImVec2 a = ImGui::GetCursorScreenPos();
+    float h = ImGui::GetTextLineHeight();
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x + 4, a.y + 2), ImVec2(a.x + 4, a.y + h - 1),
+                                        ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
+    ImGui::Dummy(ImVec2(10, 1));   // ayracın yerini tut (satırı bozmaz)
+    ImGui::SameLine();
+}
 
 // ---------------------------------------------------------------------------
 //  başlangıç ekranı — ÖNCE VS seçimi, sonra sıfır form (özgün akış)
@@ -736,6 +749,100 @@ static void SelftestStep() {
             std::string v; iss >> v;
             g_snapEnabled = (v != "off");
         }
+        else if (cmd == "hidelabels") {
+            // 6. TUR: hidelabels on|off — yan-metin etiketlerini kapat/aç (WYSIWYG:
+            // canvas + üretilen kod aynı davranır). Test kancası + kullanıcı ayarı.
+            std::string v; iss >> v;
+            g_hideLabels = (v == "on");
+            s_status = g_hideLabels ? "HIDELABELS ON" : "HIDELABELS OFF";
+        }
+        else if (cmd == "objpos") {
+            // 6. TUR: objpos <isim> [dosya] — nesnenin FORM-göreli MUTLAK konumunu
+            // yazar (konteyner içi çocukların taşıyıcıyla hareket testi).
+            std::string n, p; iss >> n;
+            std::getline(iss, p); p = TrimA(p);
+            Ctrl* c = g_model.FindByName(n);
+            if (c) {
+                ImVec2 ab = canvas::CtrlAbsPos(c);
+                char buf[128];
+                snprintf(buf, sizeof buf, "%s:@%d,%d\n", n.c_str(), (int)ab.x, (int)ab.y);
+                s_status = buf;
+                if (!p.empty()) {
+                    FILE* f = fopen(p.c_str(), "a");
+                    if (f) { fputs(buf, f); fclose(f); }
+                }
+            } else s_status = "objpos: bulunamadi " + n;
+        }
+        else if (cmd == "dragobjv") {
+            // 6. TUR: dragobjv <isim> <dy> — ALT kenar tutamacından dikey sürükleme
+            // (tutamaç 5 — "yukarı aşağı büyütüp küçültemiyorum" testi: TextBox vb).
+            std::string n; int dy; iss >> n >> dy;
+            HWND hwnd = (HWND)g_mainHwnd;
+            float rx, ry, rw, rh;
+            if (hwnd && canvas::ObjRectOf(n, &rx, &ry, &rw, &rh)) {
+                int x1 = (int)(rx + rw * 0.5f), y1 = (int)(ry + rh);   // alt kenar ortası (tutamaç 5)
+                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(x1, y1));
+                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x1, y1));
+                Inject(1, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1, y1 + dy / 2));
+                Inject(3, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1, y1 + dy));
+                Inject(4, WM_LBUTTONUP, 0, MAKELPARAM(x1, y1 + dy));
+                s_status = "dragobjv " + n + " " + std::to_string(dy);
+            }
+        }
+        else if (cmd == "dropobj") {
+            // 6. TUR: dropobj <isim> <hedefKonteyner> — nesneyi sürükle-bırak ile
+            // hedef konteynerin MERKEZİNE taşı (sürükle-bırak reparent testi:
+            // kullanıcı "nesneleri groupboxun içine koyamıyorum" akışının ta kendisi).
+            std::string n, tgt; iss >> n >> tgt;
+            HWND hwnd = (HWND)g_mainHwnd;
+            float sx, sy, sw, sh, tx, ty, tw, th;
+            if (hwnd && canvas::ObjRectOf(n, &sx, &sy, &sw, &sh) && canvas::ObjRectOf(tgt, &tx, &ty, &tw, &th)) {
+                int x1 = (int)(sx + sw * 0.5f), y1 = (int)(sy + sh * 0.5f);
+                int x2 = (int)(tx + tw * 0.5f), y2 = (int)(ty + th * 0.5f);
+                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(x1, y1));
+                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x1, y1));
+                Inject(1, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + (x2 - x1) / 2, y1 + (y2 - y1) / 2));
+                Inject(3, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x2, y2));
+                Inject(5, WM_LBUTTONUP, 0, MAKELPARAM(x2, y2));
+                s_status = "dropobj " + n + " -> " + tgt;
+            }
+        }
+        else if (cmd == "dragmove") {
+            // 6. TUR: dragmove <isim> <dx> <dy> — nesne GÖVDESİNDEN sürükleme
+            // (konteyner taşıma testi: içindeki çocuklar da hareket etmeli).
+            std::string n; int dx, dy; iss >> n >> dx >> dy;
+            HWND hwnd = (HWND)g_mainHwnd;
+            float rx, ry, rw, rh;
+            if (hwnd && canvas::ObjRectOf(n, &rx, &ry, &rw, &rh)) {
+                int x1 = (int)(rx + rw * 0.5f), y1 = (int)(ry + rh * 0.5f);
+                int x2 = x1 + dx, y2 = y1 + dy;
+                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(x1, y1));
+                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x1, y1));
+                Inject(1, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + dx / 3, y1 + dy / 3));
+                Inject(2, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + 2 * dx / 3, y1 + 2 * dy / 3));
+                Inject(4, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x2, y2));
+                Inject(5, WM_LBUTTONUP, 0, MAKELPARAM(x2, y2));
+                s_status = "dragmove " + n + " " + std::to_string(dx) + "," + std::to_string(dy);
+            }
+        }
+        else if (cmd == "dropform") {
+            // 6. TUR: dropform <isim> <fx> <fy> — nesneyi FORM-göreli noktaya
+            // sürükle-bırak (içerisine/dışarısına taşıma testleri için kesin nokta).
+            std::string n; int fx, fy; iss >> n >> fx >> fy;
+            HWND hwnd = (HWND)g_mainHwnd;
+            float sx, sy, sw, sh, rx, ry, rw, rh;
+            canvas::GetFormRect(&rx, &ry, &rw, &rh);
+            if (hwnd && canvas::ObjRectOf(n, &sx, &sy, &sw, &sh)) {
+                int x1 = (int)(sx + sw * 0.5f), y1 = (int)(sy + sh * 0.5f);
+                int x2 = (int)rx + fx, y2 = (int)ry + fy;
+                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(x1, y1));
+                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x1, y1));
+                Inject(1, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x1 + (x2 - x1) / 2, y1 + (y2 - y1) / 2));
+                Inject(3, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x2, y2));
+                Inject(5, WM_LBUTTONUP, 0, MAKELPARAM(x2, y2));
+                s_status = "dropform " + n + " " + std::to_string(fx) + "," + std::to_string(fy);
+            }
+        }
         else if (cmd == "statusfile") {
             // statusfile <yol> — durum metnini dosyaya yaz (test doğrulama kancası)
             std::string p; std::getline(iss, p);
@@ -934,6 +1041,16 @@ void Draw(EditorState* es, ImGuiIO& io) {
             if (ImGui::MenuItem("Izgara", nullptr, g_gridVisible)) g_gridVisible = !g_gridVisible;
             if (ImGui::MenuItem("Snap (8px)", nullptr, g_snapEnabled)) g_snapEnabled = !g_snapEnabled;
             ImGui::Separator();
+            // 6. TUR: "Etiketleri Gizle" — textbox'ın yanındaki "Yazı", checkbox'ın
+            // "Seçenek"... yan metinleri kapatır/açar. Canvas VE üretilen kod aynı
+            // şeyi yapar (WYSIWYG). \"##ad\" kimliği kalır → ID çakışması yok.
+            if (ImGui::MenuItem("Nesne Etiketleri (yan metinler)", nullptr, !g_hideLabels)) {
+                g_hideLabels = !g_hideLabels;
+                s_status = g_hideLabels
+                    ? "Etiketler G\304\260ZL\304\260 — nesnelerin yan\304\261ndaki metinler kapal\304\261 (canvas + \303\274retim)"
+                    : "Etiketler G\303\226R\303\234N\303\234R — yan metinler geri geldi";
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Kod Gezgini", nullptr, g_showCodetree)) g_showCodetree = !g_showCodetree;
             if (ImGui::MenuItem("Ara\303\247 Kutusu", nullptr, g_showToolbox)) g_showToolbox = !g_showToolbox;
             if (ImGui::MenuItem("Formlar", nullptr, g_showForms)) g_showForms = !g_showForms;
@@ -976,15 +1093,32 @@ void Draw(EditorState* es, ImGuiIO& io) {
         if (ToolbarButton("A\303\247", "Proje a\303\247 (Ctrl+O)")) DoOpen();
         ImGui::SameLine();
         if (ToolbarButton("Kaydet", "Kaydet (Ctrl+S)")) DoSave(false);
-        ImGui::SameLine(); ImGui::Separator();
+        ToolbarSep();
         if (ToolbarButton("Geri", "Geri al (Ctrl+Z)", g_model.CanUndo())) g_model.Undo();
         ImGui::SameLine();
         if (ToolbarButton("\304\260leri", "Yinele (Ctrl+Y)", g_model.CanRedo())) g_model.Redo();
-        ImGui::SameLine(); ImGui::Separator();
+        ToolbarSep();
         if (ToolbarButton("Sil", "Sil (Del)", !g_model.selList.empty())) { g_model.PushUndo(); g_model.DeleteList(g_model.ValidSelection()); }
-        ImGui::SameLine(); ImGui::Separator();
+        ToolbarSep();
         if (ToolbarButton("\303\234ret", "Kod \303\234ret (F6)")) s_genDialog = true;
-        ImGui::SameLine(); ImGui::Separator();
+        ToolbarSep();
+        // 6. TUR: tek tıkla "Yazı/Seçenek" yan-metinlerini aç/kapa (en sık kullanılan
+        // ayarlardan biri — menüden aramak istemeyen için araç çubuğunda da var).
+        {
+            // aktif = etiketler G\303\226R\303\234N\303\234R (d\303\274\305\237me) — kapat\304\261nca turuncu vurgu
+            if (!g_hideLabels) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.20f, 0.22f, 0.9f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.28f, 0.30f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.34f, 0.34f, 0.36f, 1.0f));
+            }
+            if (ImGui::Button(g_hideLabels ? "Etiketler: G\304\260ZL\304\260" : "Etiketler: A\303\207IK")) {
+                g_hideLabels = !g_hideLabels;
+                s_status = g_hideLabels ? "Etiketler gizlendi (yan metinler kapal\304\261)" : "Etiketler a\303\247\304\261k";
+            }
+            if (!g_hideLabels) ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nesnelerin yan\304\261ndaki metinler (\"Yaz\304\261\", \"Se\303\247enek\"...) — kapat\304\261nca canvas VE \303\274retilen kod etiketsiz \303\247izer");
+        }
+        ToolbarSep();
         ImGui::Text("%s | %s | motor: %s | \303\274retim: %s",
                     forms::Active() ? forms::Active()->name.c_str() : "-",
                     g_model.selList.size() > 1 ? (std::to_string(g_model.selList.size()) + " nesne").c_str() : (g_model.Primary() ? g_model.Primary()->name.c_str() : (g_model.formSelected ? "form" : "-")),

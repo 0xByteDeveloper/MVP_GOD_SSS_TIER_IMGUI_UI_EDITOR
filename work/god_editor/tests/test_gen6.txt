@@ -1,0 +1,36 @@
+# test_gen6.txt — 6. TUR ÜRETİM DOĞRULAMASI
+# TextBox yüksekliği (IGOD FramePadding ölçekleme) + GroupBox çocuk hiyerarşisi +
+# "Etiketleri Gizle" (u8"##ad" etiketsiz üretim) + çerçeve ailesi yükseklikleri
+snap off
+add GroupBox 40 40
+set groupBox1 Width 320
+set groupBox1 Height 200
+wait 6
+add TextBox 200 320
+wait 6
+dropobj textBox1 groupBox1
+wait 10
+expectparent textBox1 groupBox1
+dragobjv textBox1 20
+wait 8
+add Checkbox 60 300
+set checkbox1 Width 180
+set checkbox1 Height 32
+wait 6
+add SliderFloat 60 240
+select sliderFloat1
+wait 4
+dragobjv sliderFloat1 18
+wait 8
+add Combo 60 380
+select combo1
+wait 4
+dragobjv combo1 16
+wait 8
+hidelabels on
+wait 6
+genbackend 0
+projname DenemR6
+gen /home/z/my-project/work/gen6
+wait 50
+quit

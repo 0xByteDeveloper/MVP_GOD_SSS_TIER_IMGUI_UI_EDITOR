@@ -3,6 +3,7 @@ T=/home/z/my-project/tools
 R=$T/__debroot
 export LD_LIBRARY_PATH=$R/usr/lib/x86_64-linux-gnu:$R/usr/lib/x86_64-linux-gnu/wine${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export WINEDLLDIR=$R/usr/lib/x86_64-linux-gnu/wine
+export WINEDLLPATH=$R/usr/lib/x86_64-linux-gnu/wine
 export WINEDATADIR=$R/usr/share/wine
 export WINESERVER=$R/usr/lib/wine/wineserver64
 export WINEPREFIX=${WINEPREFIX:-/home/z/my-project/work/.wine64}

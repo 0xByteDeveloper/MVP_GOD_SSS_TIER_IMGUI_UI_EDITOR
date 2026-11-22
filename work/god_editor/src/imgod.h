@@ -70,6 +70,8 @@ const char* BackendIdA(EditorBackend b);        // "dx11"/"dx9"/"dx10"/"dx12"/"o
 extern bool g_modelDirty;
 extern bool g_gridVisible;
 extern bool g_snapEnabled;
+extern bool g_hideLabels;      // 6. TUR: nesnelerin YANındaki etiketler ("Yazı"/"Seçenek"...)
+                               // gizlenir — canvas ve üretilen kod AYNI şeyi yapar
 extern std::string g_statusText;
 extern std::string g_exeDirA;
 extern void* g_mainHwnd;      // editör ana pencere (HWND — selftest tıklama enjeksiyonu)

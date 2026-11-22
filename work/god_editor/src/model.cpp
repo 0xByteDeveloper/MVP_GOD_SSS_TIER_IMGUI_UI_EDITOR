@@ -201,6 +201,11 @@ int SizeCapOf(const Ctrl* c) {
         t == "Separator" || t == "TabBar" ||
         t == "Panel" || t == "ChildWindow" || t == "GroupBox")
                                  return SIZECAP_FULL;
+    // 6. TUR (kullanıcı: "textboxu sağa sola büyütüp küçültebiliyorum da yukarı
+    // aşağı yapamıyorum"): tek-satır çerçeve ailesi artık TAM boyut — yükseklik
+    // FramePadding ölçeklemesiyle çerçeve satırını büyütür (canvas + IGOD aynı
+    // dönüşüm; WYSIWYG). ListBox zaten FULL'dur; buraya güvenlik için tekrar girer.
+    if (IsFrameSizedType(t))  return SIZECAP_FULL;
     // HATA DÜZELTİLDİ (5. tur: "tabbar/labeltext/text/bullettext/seperator
     // benzeri nesnelerde aynı sorun"): tüm metin/başlık ailesi artık W ile
     // boyutlanır (wrap / sağa hizalı değer / kısaltma / child-clip).
@@ -210,6 +215,8 @@ int SizeCapOf(const Ctrl* c) {
         t == "Text" || t == "TextColored" || t == "BulletText" || t == "LabelText" ||
         t == "SeparatorText" || t == "CollapsingHeader" || t == "TreeNode")
                                  return SIZECAP_W;      // SetNextItemWidth / wrap / clip
+    // NOT: Combo/Input*/Slider*/Drag* yukarıda IsFrameSizedType ile FULL'a
+    // düştü — bu blok artık yalnız metin/başlık ailesine hizmet eder.
     if (t == "ColorEdit4")       return c->GetB("AlphaPreview") ? SIZECAP_W : SIZECAP_AUTO; // NoInputs kare içerik ölçer
     return SIZECAP_AUTO;   // Popup (görsel değil), Menu, Timer, FontRef...
 }

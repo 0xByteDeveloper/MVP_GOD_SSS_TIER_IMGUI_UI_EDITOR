@@ -18,6 +18,37 @@ bool IsContainerType(const std::string& type) {
            type == "TabBar" || type == "TreeNode" || type == "Table" || type == "Menu" ||
            type == "Popup";
 }
+
+// 6. TUR: etiketi denetimin DIŞINDA (yanında/sağında) çizilen tipler.
+// Bunlarda "Etiketleri Gizle" ayarı görünür metni kaldırır; "##ad" kimliği
+// kalır → ImGui ID benzersizliği bozulmaz, üretilen uygulama da aynı görünür.
+bool HasAdjacentLabel(const std::string& type) {
+    return type == "Checkbox" || type == "RadioButton" ||
+           type == "SliderFloat" || type == "SliderInt" ||
+           type == "DragFloat" || type == "DragInt" ||
+           type == "InputText" || type == "TextBox" ||
+           type == "InputTextMultiline" || type == "TextBoxMultiline" ||
+           type == "InputInt" || type == "InputFloat" ||
+           type == "Combo" || type == "ListBox" || type == "ColorEdit4";
+}
+
+// 6. TUR: tek-satır çerçeve ailesi — yükseklik AYARLANABİLİR (kullanıcı:
+// "textboxu sağa sola büyütüp küçültebiliyorumda yukarı aşağı yapamıyorum").
+// Dönüşüm: FramePadding.y = (h - FontSize) * 0.5 → çerçeve satırı h olur.
+bool IsFrameSizedType(const std::string& type) {
+    return type == "InputText" || type == "TextBox" ||
+           type == "InputInt" || type == "InputFloat" ||
+           type == "Combo" || type == "ListBox" ||
+           type == "SliderFloat" || type == "SliderInt" ||
+           type == "DragFloat" || type == "DragInt";
+}
+
+// 6. TUR: sürükle-bırakta İÇİNE nesne bırakılabilen (reparent hedefi) konteynerler.
+// Açık/kapalı belirsiz başlıklar (CollapsingHeader/TreeNode) hedef DEĞİL —
+// kafa karıştırmaz; TabBar'a bırakılan nesne AKTİF sekmeye bağlanır.
+bool IsDropTargetContainer(const std::string& type) {
+    return type == "Panel" || type == "ChildWindow" || type == "GroupBox" || type == "TabBar";
+}
 std::string HandlerOf(const std::string& objName, const std::string& ev) {
     return objName + "_" + ev;
 }
@@ -84,6 +115,9 @@ void Catalog::LoadBuiltin() {
       d.defaultEvent = "ValueChanged"; d.defW = 200; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Değer"), P("Min","float","Veri","0"), P("Max","float","Veri","100"),
                   P("Value","float","Veri","0"), P("Format","string","Veri","%.1f") };
+      // 6. TUR: çerçeve ailesi — genişlik VE yükseklik (FramePadding ölçekleme)
+      d.props.push_back(P("Width","int","Yerleşim","200",""));
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı; sürükle/başkasını gir"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Kaydırma çubuğu zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -97,6 +131,8 @@ void Catalog::LoadBuiltin() {
       d.defaultEvent = "ValueChanged"; d.defW = 200; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Değer"), P("Min","int","Veri","0"), P("Max","int","Veri","100"),
                   P("Value","int","Veri","0"), P("Format","string","Veri","%d") };
+      d.props.push_back(P("Width","int","Yerleşim","200",""));
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Kaydırma çubuğu zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -110,6 +146,8 @@ void Catalog::LoadBuiltin() {
       d.defaultEvent = "ValueChanged"; d.defW = 180; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Değer"), P("Min","float","Veri","0"), P("Max","float","Veri","100"),
                   P("Value","float","Veri","0"), P("Speed","float","Veri","1") };
+      d.props.push_back(P("Width","int","Yerleşim","180",""));
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -121,6 +159,8 @@ void Catalog::LoadBuiltin() {
       d.defaultEvent = "ValueChanged"; d.defW = 180; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Değer"), P("Min","int","Veri","0"), P("Max","int","Veri","100"),
                   P("Value","int","Veri","0"), P("Speed","float","Veri","1") };
+      d.props.push_back(P("Width","int","Yerleşim","180",""));
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -135,6 +175,7 @@ void Catalog::LoadBuiltin() {
                   P("Password","bool","Davranış","False","","Yıldız maskesi"),
                   P("ReadOnly","bool","Davranış","False","","Salt okunur"),
                   P("Width","int","Yerleşim","200") };
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı; sürükle: yukarı/aşağı büyür"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -151,6 +192,7 @@ void Catalog::LoadBuiltin() {
                   P("Password","bool","Davranış","False","","Yıldız maskesi"),
                   P("ReadOnly","bool","Davranış","False","","Salt okunur"),
                   P("Width","int","Yerleşim","200") };
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı; sürükle: yukarı/aşağı büyür"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -185,6 +227,8 @@ void Catalog::LoadBuiltin() {
     { ElementDef d; d.name = "InputInt"; d.cppApi = "ImGui::InputInt"; d.kind = "control"; d.catTr = "Ortak";
       d.defaultEvent = "ValueChanged"; d.defW = 160; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Sayı"), P("Value","int","Veri","0"), P("Step","int","Veri","1") };
+      d.props.push_back(P("Width","int","Yerleşim","160",""));
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -195,6 +239,8 @@ void Catalog::LoadBuiltin() {
     { ElementDef d; d.name = "InputFloat"; d.cppApi = "ImGui::InputFloat"; d.kind = "control"; d.catTr = "Ortak";
       d.defaultEvent = "ValueChanged"; d.defW = 160; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Sayı"), P("Value","float","Veri","0"), P("Step","float","Veri","1") };
+      d.props.push_back(P("Width","int","Yerleşim","160",""));
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
@@ -206,6 +252,7 @@ void Catalog::LoadBuiltin() {
       d.defaultEvent = "SelectionChanged"; d.defW = 200; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Seçim"), P("Items","items","Veri","Seçenek 1|Seçenek 2|Seçenek 3","","Öğeler | ile ayrılır"),
                   P("Selected","int","Veri","0"), P("Width","int","Yerleşim","200") };
+      d.props.push_back(P("Height","int","Yerleşim","0","","0 = ImGui varsayılanı"));
       AddTextColors(d.props);
       d.props.push_back(P("FrameBgColor","color","Renk","","","Kutu zemini"));
       d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));

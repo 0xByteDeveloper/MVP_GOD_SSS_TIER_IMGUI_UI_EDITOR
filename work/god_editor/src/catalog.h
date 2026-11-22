@@ -63,3 +63,14 @@ extern Catalog g_catalog;
 // Katalog yardımcıları
 bool IsContainerType(const std::string& type);
 std::string HandlerOf(const std::string& objName, const std::string& ev);
+
+// 6. TUR aile yardımcıları (canvas + özellik paneli + kod üretimi TEK gerçek)
+// Yan-metinli (etiketi DENETİMİN DIŞINDA çizilen) tipler — "Etiketleri Gizle"
+// ayarı bu aileyi etkiler: gizliyken etiket yalnız "##ad" kimliğine iner.
+bool HasAdjacentLabel(const std::string& type);
+// Çerçeve-yüksekliği ölçeklenebilen tek-satır giriş ailesi (TextBox dahil):
+// boyut (W+H) — yükseklik FramePadding ölçeklemesiyle çerçeve satırını büyütür.
+// canvas VE üretilen IGOD sarmalayıcıları AYNI dönüşümü uygular (WYSIWYG).
+bool IsFrameSizedType(const std::string& type);
+// Sürükle-bırak ile İÇİNE nesne bırakılabilen konteynerler (reparent hedefleri).
+bool IsDropTargetContainer(const std::string& type);

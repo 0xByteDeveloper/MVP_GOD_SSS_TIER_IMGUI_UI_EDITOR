@@ -63,6 +63,9 @@ Files: mingw-w64-crt/cfguard/*
        mingw-w64-crt/libsrc/scard*.c
        mingw-w64-crt/libsrc/scrnsave.c
        mingw-w64-crt/libsrc/tsuserex_i.c
+       mingw-w64-crt/math/arm-common/*
+       mingw-w64-crt/math/arm64/*
+       mingw-w64-crt/math/arm/nearbyint*
        mingw-w64-crt/math/cbrt*.c
        mingw-w64-crt/math/copysign*
        mingw-w64-crt/math/cosh*.c
@@ -84,6 +87,7 @@ Files: mingw-w64-crt/cfguard/*
        mingw-w64-crt/math/powf.c
        mingw-w64-crt/math/r*
        mingw-w64-crt/math/signbit*.c
+       mingw-w64-crt/math/sincos*.c
        mingw-w64-crt/math/sinh*
        mingw-w64-crt/math/t*
        mingw-w64-crt/math/x86/acosf.c
@@ -94,7 +98,7 @@ Files: mingw-w64-crt/cfguard/*
        mingw-w64-crt/math/x86/_chgsignl.S
        mingw-w64-crt/math/x86/cosf.c
        mingw-w64-crt/math/x86/cosl_internal.S
-       mingw-w64-crt/math/x86/cossin.c
+       mingw-w64-crt/math/x86/cossin*.c
        mingw-w64-crt/math/x86/exp2*.S
        mingw-w64-crt/math/x86/fastmath.h
        mingw-w64-crt/math/x86/floor*.S
@@ -107,29 +111,36 @@ Files: mingw-w64-crt/cfguard/*
        mingw-w64-crt/profile/mcountFunc.S
        mingw-w64-crt/stdio/atoll.c
        mingw-w64-crt/stdio/_Exit.c
+       mingw-w64-crt/stdio/fgetpos.c
+       mingw-w64-crt/stdio/fgetws.c
+       mingw-w64-crt/stdio/_filelengthi64.c
        mingw-w64-crt/stdio/fopen64.c
+       mingw-w64-crt/stdio/fputws.c
        mingw-w64-crt/stdio/fseeko64.c
+       mingw-w64-crt/stdio/fsetpos.c
+       mingw-w64-crt/stdio/_fstat*.c
+       mingw-w64-crt/stdio/_ftelli64.c
        mingw-w64-crt/stdio/ftello64.c
+       mingw-w64-crt/stdio/iob_func.c
        mingw-w64-crt/stdio/lltoa.c
        mingw-w64-crt/stdio/lltow.c
        mingw-w64-crt/stdio/lseek64.c
-       mingw-w64-crt/stdio/mingw_fprintfw.c
-       mingw-w64-crt/stdio/mingw_pformatw.c
-       mingw-w64-crt/stdio/mingw_printfw.c
-       mingw-w64-crt/stdio/mingw_snprintfw.c
-       mingw-w64-crt/stdio/mingw_sprintfw.c
-       mingw-w64-crt/stdio/mingw_vfprintfw.c
-       mingw-w64-crt/stdio/mingw_vprintfw.c
-       mingw-w64-crt/stdio/mingw_vsnprintfw.c
-       mingw-w64-crt/stdio/mingw_vsprintfw.c
+       mingw-w64-crt/stdio/__mingw_fix_*stat_path.c
+       mingw-w64-crt/stdio/msvcr110*_*stat*
+       mingw-w64-crt/stdio/_scwprintf.c
        mingw-w64-crt/stdio/snprintf.c
-       mingw-w64-crt/stdio/snwprintf.c
+       mingw-w64-crt/stdio/snwprintf*.c
+       mingw-w64-crt/stdio/*stat*.c
+       mingw-w64-crt/stdio/swprintf*.c
        mingw-w64-crt/stdio/strtof.c
+       mingw-w64-crt/stdio/ucrt*
        mingw-w64-crt/stdio/ulltoa.c
        mingw-w64-crt/stdio/ulltow.c
        mingw-w64-crt/stdio/v*scanf*
-       mingw-w64-crt/stdio/vs*printf*
+       mingw-w64-crt/stdio/*vs*printf*
+       mingw-w64-crt/stdio/*wstat*
        mingw-w64-crt/stdio/wtoll.c
+       mingw-w64-crt/string/ucrt*
        mingw-w64-crt/testcases/tstmainc.c
        mingw-w64-crt/testcases/tstmaincpp.cpp
        mingw-w64-crt/testcases/tstmain_sys_xxx.c
@@ -228,7 +239,9 @@ License: David-Gay
  ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
  OF THIS SOFTWARE.
 
-Files: mingw-w64-crt/math/s_erf.c
+Files: mingw-w64-crt/math/arm-common/s_remquo*.c
+       mingw-w64-crt/math/arm/s_*
+       mingw-w64-crt/math/s_erf.c
        mingw-w64-crt/math/sf_erf.c
        mingw-w64-crt/math/softmath/bsd_private.h
        mingw-w64-crt/math/softmath/bsd_privatef.h
@@ -285,9 +298,7 @@ License: Cygwin
  General Public License for more details.
  .
  You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301,
- USA.
+ along with this program.  If not, see <http://www.gnu.org/licenses/>.
  .
                          *** NOTE ***
  .
@@ -322,6 +333,10 @@ Files: mingw-w64-crt/stdio/strtok_r.c
 Copyright: 1988, 1993 The Regents of the University of California
            1998 Softweyr LLC
 License: BSD-3-clause
+
+Files: mingw-w64-crt/string/wcstok.c
+Copyright: 2005-2020 Rich Felker, et al.
+License: expat
 
 Files: mingw-w64-headers/crt/profile.h
 Copyright: 1992, 1993 The Regents of the University of California
@@ -423,7 +438,7 @@ License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3d11.idl
 Copyright: 2010 Rico Schüller
-	   2013 Austin English
+           2013 Austin English
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3d11_?.idl
@@ -439,11 +454,17 @@ Copyright: 2010 Matteo Bruni for CodeWeavers
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3d12video.idl
+       mingw-w64-headers/include/windows.applicationmodel.datatransfer.idl
+       mingw-w64-headers/include/windows.data.xml.dom.idl
+       mingw-w64-headers/include/windows.graphics.idl
        mingw-w64-headers/include/windows.graphics.imaging.idl
        mingw-w64-headers/include/windows.media.capture.idl
        mingw-w64-headers/include/windows.media.effects.idl
        mingw-w64-headers/include/windows.media.faceanalysis.idl
        mingw-w64-headers/include/windows.media.render.idl
+       mingw-w64-headers/include/windows.security.authorization.appcapabilityaccess.idl
+       mingw-w64-headers/include/windows.security.enterprisedata.idl
+       mingw-w64-headers/include/windows.ui.notifications.idl
        mingw-w64-headers/include/windows.ui.xaml.hosting.desktopwindowxamlsource.idl
        mingw-w64-headers/include/xamlom.idl
 Copyright: 2023-2024 Biswapriyo Nath
@@ -458,13 +479,13 @@ License: LGPL-2.1+
 Files: mingw-w64-headers/include/d3d9caps.h
        mingw-w64-headers/include/d3d9.h
 Copyright: 2002-2003 Jason Edmeades
-	   	     Raphael Junqueria
+                     Raphael Junqueria
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3d9types.h
 Copyright: 2002-2003 Jason Edmeades
-	   2002-2003 Raphael Junqueria
-	   2005 Oliver Steiber
+           2002-2003 Raphael Junqueria
+           2005 Oliver Steiber
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3d.h
@@ -477,18 +498,18 @@ License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3drmdef.h
 Copyright: 2007, 2010 Vijay Kiran Kamuju
-	   2007 David Adam
-	   2010 Christian Costa
+           2007 David Adam
+           2010 Christian Costa
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3drm.h
 Copyright: 2005 Peter Berg Larsen
-	   2010 Christian Costa
+           2010 Christian Costa
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3drmobj.h
 Copyright: 2008 Vijay Kiran Kamuju
-	   2010 Christian Costa
+           2010 Christian Costa
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3dtypes.h
@@ -510,7 +531,7 @@ License: LGPL-2.1+
 Files: mingw-w64-headers/include/d3dx9math.*
        mingw-w64-headers/include/d3dx9mesh.h
 Copyright: 2007 David Adam
-	   2007 Tony Wasserka
+           2007 Tony Wasserka
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/d3dx9shader.h
@@ -583,7 +604,7 @@ License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/mediaobj.idl
 Copyright: 2002 Alexandre Julliard
-	   2004 Vincent Béron
+           2004 Vincent Béron
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/msxml.idl
@@ -700,6 +721,12 @@ Files: mingw-w64-headers/include/textstor.idl
 Copyright: 2009 Aric Stewart, CodeWeavers
 License: LGPL-2.1+
 
+Files: mingw-w64-headers/include/wia.h
+       mingw-w64-headers/include/wia_lh.idl
+       mingw-w64-headers/include/wia_xp.idl
+Copyright: 2009 Damjan Jovanovic
+License: LGPL-2.1+
+
 Files: mingw-w64-headers/include/wincodec.idl
 Copyright: 2009 Vincent Povirk for CodeWeavers
 License: LGPL-2.1+
@@ -708,7 +735,8 @@ Files: mingw-w64-headers/include/winddiui.h
 Copyright: 2007 Marcel Partap
 License: LGPL-2.1+
 
-Files: mingw-w64-headers/include/windows.applicationmodel.core.idl
+Files: mingw-w64-headers/include/weakreference.idl
+       mingw-w64-headers/include/windows.applicationmodel.core.idl
        mingw-w64-headers/include/windows.devices.haptics.idl
        mingw-w64-headers/include/windows.devices.power.idl
        mingw-w64-headers/include/windows.foundation.numerics.idl
@@ -724,8 +752,8 @@ Files: mingw-w64-headers/include/windows.applicationmodel.core.idl
 Copyright: 2021-2023 Rémi Bernon for CodeWeavers
 License: LGPL-2.1+
 
-Files: mingw-w64-headers/include/windows.devices.bluetooth.idl
-       mingw-w64-headers/include/windows.devices.radio.idl
+Files: mingw-w64-headers/include/windows.data.json.idl
+       mingw-w64-headers/include/windows.devices.bluetooth.idl
        mingw-w64-headers/include/windows.devices.usb.idl
        mingw-w64-headers/include/windows.graphics.capture.idl
        mingw-w64-headers/include/windows.graphics.capture.interop.idl
@@ -734,7 +762,6 @@ Files: mingw-w64-headers/include/windows.devices.bluetooth.idl
        mingw-w64-headers/include/windows.graphics.effects.idl
        mingw-w64-headers/include/windows.graphics.holographic.idl
        mingw-w64-headers/include/windows.media.closedcaptioning.idl
-       mingw-w64-headers/include/windows.networking.connectivity.idl
        mingw-w64-headers/include/windows.networking.idl
        mingw-w64-headers/include/windows.perception.spatial.idl
        mingw-w64-headers/include/windows.perception.spatial.surfaces.idl
@@ -761,8 +788,16 @@ Files: mingw-w64-headers/include/windows.devices.geolocation.idl
 Copyright: 2023 Fabian Maurer
 License: LGPL-2.1+
 
-Files: mingw-w64-headers/include/windows.foundation.metadata.idl
-Copyright: 2022 Zhiyi Zhang for CodeWeavers
+Files: mingw-w64-headers/include/windows.applicationmodel.activation.idl
+       mingw-w64-headers/include/windows.applicationmodel.background.idl
+       mingw-w64-headers/include/windows.applicationmodel.datatransfer.dragdrop.core.idl
+       mingw-w64-headers/include/windows.applicationmodel.datatransfer.dragdrop.idl
+       mingw-w64-headers/include/windows.devices.input.idl
+       mingw-w64-headers/include/windows.foundation.metadata.idl
+       mingw-w64-headers/include/windows.ui.input.idl
+       mingw-w64-headers/include/windows.ui.xaml.idl
+       mingw-w64-headers/include/windows.ui.xaml.interop.idl
+Copyright: 2022, 2024 Zhiyi Zhang for CodeWeavers
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/windows.gaming.ui.idl
@@ -779,7 +814,13 @@ Files: mingw-w64-headers/include/windows.media.speechrecognition.idl
 Copyright: 2022 Bernhard Kölbl
 License: LGPL-2.1+
 
-Files: mingw-w64-headers/include/windows.security.cryptography.idl
+Files: mingw-w64-headers/include/windows.networking.connectivity.idl
+Copyright: 2021 Alistair Leslie-Hughes
+           2023 Mohamad Al-Jaf
+License: LGPL-2.1+
+
+Files: mingw-w64-headers/include/webservices.h
+       mingw-w64-headers/include/windows.security.cryptography.idl
        mingw-w64-headers/include/windows.system.threading.idl
 Copyright: 2022 Nikolay Sivov for CodeWeavers
 License: LGPL-2.1+
@@ -787,6 +828,10 @@ License: LGPL-2.1+
 Files: mingw-w64-headers/include/wmsbuffer.idl
        mingw-w64-headers/include/wmsdkidl.idl
 Copyright: 2012 André Hentschel
+License: LGPL-2.1+
+
+Files: mingw-w64-headers/include/x3daudio.h
+Copyright: 2015 Andrew Eikum for CodeWeavers
 License: LGPL-2.1+
 
 Files: mingw-w64-headers/include/xmldom.idl
@@ -868,7 +913,7 @@ License: BSD-3-clause
 
 Files: mingw-w64-libraries/winpthreads/tests_pthread/*
 Copyright: 1998 John E. Bossom
-	   1999, 2005 Pthreads-win32 contributors
+           1999, 2005 Pthreads-win32 contributors
 License: LGPL-2+
 
 Files: mingw-w64-libraries/winstorecompat/*
@@ -894,16 +939,22 @@ Copyright: 1996, 2000, 2002, 2010, 2017 Alexandre Julliard
            1999 Patrick Stridvall
            1999 Rein Klazes
            2001-2003 Jon Griffiths
+           2002 Travis Michielsen
            2002, 2004 Ove Kaaven
            2004 Alastair Bridgewater
            2004 Mike McCormack
-           2004, 2005 Huw Davies
+           2004-2005 Huw Davies
+           2004-2005 Juan Lang
            2005-2006 Eric Kohl
            2005-2008 Robert Shearman
            2006 Jacek Caban for CodeWeavers
+           2007 Vijay Kiran Kamuju
+           2007 Francois Gouget
            2015, 2016 Dmitry Timoshkov
+           2016 Austin English
            2023 Mohamad Al-Jaf
            2023 Vitaly Lipatov
+           2024, 2025 Hans Leidekker for CodeWeavers
            The Wine project
 License: LGPL-2.1+
 
@@ -917,8 +968,8 @@ License: LGPL-2+
 
 Files: debian/*
 Copyright: 2009, 2010 Robert Millan
-           2010-2020, 2022-2025 Stephen Kitt <skitt@debian.org>
-           2022 Konstantin Demin
+           2010-2020, 2022-2026 Stephen Kitt <skitt@debian.org>
+           2022, 2026 Konstantin Demin
            2023 John Scott <jscott@posteo.net>
 License: GPL-2+
 
