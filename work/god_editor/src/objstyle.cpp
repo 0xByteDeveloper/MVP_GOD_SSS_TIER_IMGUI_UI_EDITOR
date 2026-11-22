@@ -78,6 +78,7 @@ std::vector<Entry> Collect(const Ctrl* c) {
     // — çerçeve ailesi (giriş/kaydırma/seçim)
     if (t == "Checkbox" || t == "RadioButton" || t == "SliderFloat" || t == "SliderInt" ||
         t == "DragFloat" || t == "DragInt" || t == "InputText" || t == "InputTextMultiline" ||
+        t == "TextBox" || t == "TextBoxMultiline" ||
         t == "InputInt" || t == "InputFloat" || t == "Combo" || t == "ListBox" ||
         t == "ColorEdit4" || t == "ProgressBar" || t == "Button") {
         AddColor(out, c, "FrameBgColor", ImGuiCol_FrameBg);
@@ -99,8 +100,8 @@ std::vector<Entry> Collect(const Ctrl* c) {
     }
     if (t == "TabBar") AddColor(out, c, "TabSelectedColor", ImGuiCol_TabSelected);
     if (t == "Table")  AddColor(out, c, "HeaderBgColor", ImGuiCol_TableHeaderBg);
-    if (t == "Separator") AddColor(out, c, "SeparatorColor", ImGuiCol_Separator);
-    if (t == "SeparatorText") AddColor(out, c, "SeparatorTextColor", ImGuiCol_TextDisabled);
+    // Separator + SeparatorText: ayraç çizgisi/çubuğu rengi (aynı özellik adı)
+    if (t == "Separator" || t == "SeparatorText") AddColor(out, c, "SeparatorColor", ImGuiCol_Separator);
 
     // — stil değişkenleri
     // Panel'de "Rounding" → ChildRounding (child bölge köşesi); diğerlerinde

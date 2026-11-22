@@ -1,47 +1,45 @@
-# IMGUI GOD SSS TIER — Teslim Paketleri (Sürüm 4)
+# IMGUI GOD SSS TIER — Teslim Paketleri (Sürüm 5)
 
 ## 1. IMGUI_GOD_SSSTIER.zip — Editör + kaynak kod (tam proje)
 
 Dear ImGui tabanlı UI editör + VS2019 kod üreticisi (M2GodWin32 Faz 2.13'ün ImGui portu).
 
-- `src/` — editör kaynak kodu (canvas, model, katalog, kod üretici, özellik paneli, tema, objstyle)
-- `imgui/` — Dear ImGui 1.91.8 SDK
-- `tests/` — 10 senaryo / 45 doğrulama (Wine altında gerçek WM mesaj enjeksiyonu ile — hepsi PASS)
-- `Bin/imgod_editor_x64.exe` — DERLENMİŞ editör (mingw-w64, x64, statik) + `Bin/fonts/` (Türkçe DejaVu)
-- `build.sh` — bağımsız derleme (x86_64-w64-mingw32-g++)
+- `god_editor/src/` — editör kaynak kodu (canvas, model, katalog, kod üretici, özellik paneli, tema, objstyle)
+- `god_editor/imgui/` — Dear ImGui 1.91.8 SDK + backend'ler (dx9/10/11/12, opengl3, win32)
+- `god_editor/tests/` — **12 senaryo / 70 doğrulama** (Wine altında gerçek WM mesaj enjeksiyonu — hepsi PASS)
+- `god_editor/Bin/imgod_editor_x64.exe` — DERLENMİŞ editör (mingw-w64, x64, statik) + `Bin/fonts/` (Türkçe DejaVu)
+- `god_editor/build.sh` — bağımsız derleme (x86_64-w64-mingw32-g++-posix)
+- `god_editor/README.md` — teknik özet
 
-Sürüm 4 yenilikleri — "combo/listbox GÖRSEL boyutlanmıyordu, yalnız özellikteki sayı değişiyordu"
-raporunun KÖKTEN çözümü:
-
-- **Combo, ListBox, Slider, Drag, InputText, InputInt/Float, ColorEdit4, Table artık
-  GERÇEKÇEN boyutlanıyor** — SetNextItemWidth / BeginListBox(w,h) / outer_size hem editör
-  canvas'ta hem üretilen kodda (IGOD `Width`/`Size` alanları) aynı değerle uygulanır.
-- **Tipe göre dürüst tutamaç maskesi**: tam boyutlanan (Button/ProgressBar/Plot/Multiline/
-  ListBox/Panel/Child/GroupBox) → 8 tutamaç; yalnız genişlik (Combo/Slider/Drag/Input/
-  Color/Table) → sağ/sol kenar; içerik boyutlu (Checkbox/Radio/Text/Separator/Header/
-  TreeNode/TabBar) → tutamaç yok + özellik panelinde "(otomatik)" — hayalet boyut yok.
-- **Özellik paneli Boyut satırı yeteneğe göre**: FULL → `w, h` düzenlenebilir; W →
-  `Genişlik` + yükseklik "(otomatik)"; AUTO → "(otomatik — içerikten ölçülür)".
-- Tutamaçla boyut değişince Width/Height/SizeArg/HeightItems özellikleri AYNI sayıya
-  senkron; ListBox yüksekliği ↔ HeightItems iki yön tutarlı.
-- Üretilen `IGOD::ColorEdit4` editörle AYNI NoInputs kipini bağlı (WYSIWYG).
-
-Sürüm 3: form boyutlandırma sınırı · tek yerleştirme · SAĞ TIK bağlam menüsü ·
-Panel aracı · form başlığı nötr · gizli bellek/çöküş hataları.
+### Sürüm 5 (5. tur) — kullanıcının son raporunun tam çözümü
+- **TabBar W×H boyutlandırılabilir** (child bölge sarmalaması; canvas = üretilen kod).
+- **GroupBox/Panel içine nesne KOYULABİLİR**: derinlik tabanlı hit-test — konteyner
+  çocuklarını gölgelamiyor; içteki nesne tıklanır/seçilir/taşınır/boyutlanır. İç içe
+  konteynerlerde en İÇTEKİ kazanır; TabBar'a yerleşim TabOwner=aktif sekme (nesne görünür).
+- **LabelText genişliği kısaltılabilir** (değer sağ uçta hizalanır).
+- **Text/TextColored/BulletText/Checkbox/RadioButton boyutlandırılabilir**: metin wrap,
+  etiket kısaltma, checkbox kare yükseklikle büyür (WinForms ruhu; üretim kodu aynı dönüşüm).
+- **Form boş alanına tıkla = form seçimi** (eskiden yalnız ESC seçiyordu).
+- **TextBox + TextBoxMultiline** araç kutusunda (M2God sözlüğü).
+- **Separator GERÇEK W×H dolgu çubuğu** (kalınlık ayarlanabilir); SeparatorText w'ye kadar
+  çizgi; CollapsingHeader/TreeNode genişlik sınırı.
+- **Araç kutusu arama ÖĞE bazlı** ("label" yazınca yalnız eşleşen nesneler listelenir).
+- **Editör kroması NÖTR GRI** (her temada): başlıklar/sekmeler/giriş kutuları/düğmeler mavi
+  değil; form listesi seçili satır koyu gri; + Yeni Form yeşil / Sil kırmızı / Yen. Ad nötr;
+  canvas zemini + ızgara + temizlik rengi nötr. Tasarım formu WYSIWYG üretim temasında.
+- **Kod üretimi sağlamlaştırma**: Form1.h çocuk ÇİFT bildirim hatası giderildi; üretilen
+  proje MinGW ile DERLENİP doğrulanıyor (IGOD SDK: FitTextToWidth, boyutlu
+  Separator/SeparatorText/BulletText, Checkbox/Radio W+H, TabBar Size).
 
 ## 2. DenemImgui.zip — üretilmiş ÖRNEK proje (derlenmiş)
 
-Editörden üretilmiş, VS2019 ile açılabilir (`DenemImgui.sln`, v142 x64/Win32) ve
-MinGW ile derlenebilir (`build_mingw.sh`) örnek ImGui uygulaması.
+Editörden üretilmiş vitrin projesi: Panel (içinde buton), TextBox, LabelText, kaydırmalı Text,
+büyük Checkbox, RadioButton, W×H Separator, SeparatorText, BulletText, sağ sütun klasikleri
+(Slider/Combo/ListBox/ProgressBar), W×H TabBar (içinde buton), GroupBox (içinde TextBox).
 
-- `Form1.cpp/.h`, `Global.h` (IGOD SDK), `main.cpp` (DX11 + seçilebilir motorlar)
-- Panel içi buton, checkbox, **280px slider**, **300px combo**, **240x110 listbox**,
-  progress bar, Türkçe metinler — `combo1.Width = 300;` / `listBox1.Size = ImVec2(240, 110);`
-  bağlamaları görünür
-- `Bin/DenemImgui.exe` — DERLENMİŞ çalışır uygulama (mingw-w64, statik)
-- `imgui/` + `fonts/` SDK kopyaları
+- `DenemImgui_final/DenemImgui/` — VS2019 çözümü (`.sln` + `.vcxproj`) + `build_mingw.sh`
+- `DenemImgui_final/DenemImgui/Bin/DenemImgui.exe` — MinGW ile DERLENMİŞ çalışır exe
+- `Form1.cpp/.h`, `Global.h` (IGOD SDK), `main.cpp`, `imgui/`, `fonts/`
 
-Çalıştırma: `DenemImgui.exe` — editörde tasarlanan form AYNEN açılır (WYSIWYG doğrulandı:
-geniş combo, boyutlu listbox derlenmiş uygulamada birebir aynı).
-
-Kaynak: https://github.com/0xByteDeveloper/MVP_GOD_SSS_TIER_IMGUI_UI_EDITOR
+Derleme: `cd DenemImgui && bash build_mingw.sh` (VS2019'da `.sln` açılır) — Wine/Linux'ta
+`Bin/DenemImgui.exe` doğrudan çalışır (dx11).

@@ -1,2 +1,0 @@
-Form2 startup=0 created=1
-Form1 startup=1 created=1

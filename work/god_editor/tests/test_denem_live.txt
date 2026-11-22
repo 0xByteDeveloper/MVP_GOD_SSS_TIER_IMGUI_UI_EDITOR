@@ -1,0 +1,38 @@
+snap off
+wait 20
+form 700 580
+add Panel 24 24
+set panel1 Width 280
+set panel1 Height 170
+set panel1 Rounding "6"
+set panel1 BgColor "#1A2030"
+set panel1 BorderColor "#3A4A66"
+arm Button
+wait 5
+clickobj panel1
+wait 10
+set button1 Text "Panel İçi Buton"
+set button1 ButtonColor "#D25410"
+add TextBox 24 220
+set textBox1 Width 240
+add LabelText 24 260
+set labelText1 Width 240
+add Text 24 295
+set text1 Text "Bu uzun metin tasarım genişliğinde satırlara kırılır"
+set text1 Width 240
+add Checkbox 320 24
+set checkbox1 Width 170
+set checkbox1 Height 34
+add Separator 320 115
+set separator1 Width 240
+set separator1 Height 8
+add SeparatorText 320 140
+set separatorText1 Width 240
+add BulletText 320 175
+set bulletText1 Width 200
+add TabBar 24 340
+set tabBar1 Width 420
+set tabBar1 Height 220
+select checkbox1
+wait 100000
+quit

@@ -1,0 +1,102 @@
+# NİHAİ TESLİM ÖRNEĞİ — DenemImgui (tüm 5. tur özellikleriyle vitrin projesi)
+projname DenemImgui
+snap off
+wait 15
+form 700 580
+
+# Panel + içine yerleştirilmiş buton (derinlik hit-testi + konteyner)
+add Panel 24 24
+set panel1 Width 280
+set panel1 Height 170
+set panel1 Rounding "6"
+set panel1 BgColor "#1A2030"
+set panel1 BorderColor "#3A4A66"
+arm Button
+wait 5
+clickobj panel1
+wait 10
+set button1 Text "Panel İçi Buton"
+set button1 ButtonColor "#D25410"
+set button1 ButtonHoverColor "#EE7A30"
+set button1 TextColor "#FFFFFF"
+
+# TextBox (5. tur #6 — M2God sözlüğü)
+add TextBox 24 220
+set textBox1 Width 240
+set textBox1 Value "Metin girin..."
+
+# LabelText — değer sağa hizalı (5. tur #3)
+add LabelText 24 260
+set labelText1 Width 240
+
+# Text — genişlikte kaydırma (5. tur #4)
+add Text 24 295
+set text1 Text "Bu uzun metin tasarım genişliğinde satırlara kırılır"
+set text1 Width 240
+
+# Checkbox — kare ölçeklenir (5. tur #4)
+add Checkbox 320 24
+set checkbox1 Width 170
+set checkbox1 Height 34
+set checkbox1 Text "Büyük onay kutusu"
+
+# RadioButton — aynı davranış
+add RadioButton 320 70
+set radioButton1 Width 150
+set radioButton1 Height 30
+set radioButton1 Text "Seçenek A"
+
+# Separator — gerçek W×H çubuk (5. tur #7)
+add Separator 320 115
+set separator1 Width 240
+set separator1 Height 8
+set separator1 SeparatorColor "#5A5A62"
+
+# SeparatorText — w'ye kadar çizgi
+add SeparatorText 320 140
+set separatorText1 Width 240
+set separatorText1 Text "Bölüm"
+
+# BulletText — genişliğe sığdırma
+add BulletText 320 175
+set bulletText1 Width 200
+set bulletText1 Text "Genişliğe sığan madde"
+
+# Klasik denetimler (sağ sütun)
+add SliderFloat 500 24
+set sliderFloat1 Width 170
+set sliderFloat1 Value "40"
+add Combo 500 70
+set combo1 Width 170
+add ListBox 500 110
+set listBox1 Width 170
+set listBox1 Height 96
+add ProgressBar 500 220
+set progressBar1 Value "0.7"
+
+# TabBar — W×H bölge + sekmeye çocuk (5. tur #1)
+add TabBar 24 340
+set tabBar1 Width 420
+set tabBar1 Height 220
+wait 15
+arm Button
+wait 5
+clickobj tabBar1
+wait 10
+set button2 Text "Sekme Butonu"
+
+# GroupBox + içinde TextBox
+add GroupBox 500 260
+set groupBox1 Width 176
+set groupBox1 Height 140
+arm TextBox
+wait 5
+clickobj groupBox1
+wait 10
+set textBox2 Width 140
+
+wait 25
+gen Z:/home/z/my-project/work/DenemImgui_final
+wait 8
+save state_denem.imgod
+quit

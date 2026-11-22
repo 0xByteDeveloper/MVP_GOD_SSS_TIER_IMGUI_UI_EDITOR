@@ -144,6 +144,10 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
     }
     else if (t == "Checkbox") {
         Bind(ctx, c, "Text = " + ULabel(c, "Text", "Seçenek"));
+        // BOYUT (WYSIWYG): genişlik/yükseklik — canvas ile aynı dönüşüm
+        // (FramePadding ölçekleme + etiket kısaltma) IGOD::Checkbox içinde.
+        Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
+        Bind(ctx, c, "Height = " + std::to_string(c->h > 0 ? c->h : 0));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    " << c->name << ".Checked0 = " << (c->GetB("Checked") ? "true" : "false") << ";\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "Checked") << "();\n";
@@ -152,13 +156,16 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
     else if (t == "RadioButton") {
         Bind(ctx, c, "Text = " + ULabel(c, "Text", "Seçim"));
         Bind(ctx, c, std::string("Active = ") + (c->GetB("Active") ? "true" : "false"));
+        Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
+        Bind(ctx, c, "Height = " + std::to_string(c->h > 0 ? c->h : 0));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, "Click") << "();\n";
         ctx.decls << "    IGOD::RadioButton " << c->name << ";\n";
     }
     else if (t == "SliderFloat" || t == "SliderInt" || t == "DragFloat" || t == "DragInt" ||
-             t == "InputText" || t == "InputTextMultiline" || t == "InputInt" || t == "InputFloat") {
-        Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "InputText" || t == "InputTextMultiline" ? "Yazı" : "Değer"));
+             t == "InputText" || t == "InputTextMultiline" || t == "TextBox" || t == "TextBoxMultiline" ||
+             t == "InputInt" || t == "InputFloat") {
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "InputText" || t == "InputTextMultiline" || t == "TextBox" || t == "TextBoxMultiline" ? "Yazı" : "Değer"));
         if (t == "SliderFloat" || t == "DragFloat" || t == "InputFloat") {
             Bind(ctx, c, "Value = " + FNum((float)atof(NumOf(c, "Value", "0").c_str())));
             Bind(ctx, c, "Min = " + FNum((float)atof(NumOf(c, "Min", "0").c_str())));
@@ -171,13 +178,13 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
         if (t == "SliderFloat" || t == "SliderInt") Bind(ctx, c, "Format = " + UPlain(StrOf(c, "Format", t == "SliderFloat" ? "%.1f" : "%d")));
         if (t == "DragFloat" || t == "DragInt")    Bind(ctx, c, "Speed = " + FNum((float)atof(NumOf(c, "Speed", "1").c_str())));
         if (t == "InputInt" || t == "InputFloat")   Bind(ctx, c, "Step = " + FNum((float)atof(NumOf(c, "Step", "1").c_str())));
-        if (t == "InputText") {
+        if (t == "InputText" || t == "TextBox") {
             Bind(ctx, c, "Value = " + UPlain(StrOf(c, "Value", "")));
             Bind(ctx, c, "Hint = " + UPlain(StrOf(c, "Hint", "")));
             Bind(ctx, c, std::string("Password = ") + (c->GetB("Password") ? "true" : "false"));
             Bind(ctx, c, std::string("ReadOnly = ") + (c->GetB("ReadOnly") ? "true" : "false"));
         }
-        if (t == "InputTextMultiline") {
+        if (t == "InputTextMultiline" || t == "TextBoxMultiline") {
             Bind(ctx, c, "Value = " + UPlain(StrOf(c, "Value", "")));
             Bind(ctx, c, "ReadOnly = " + std::string(c->GetB("ReadOnly") ? "true" : "false"));
             Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "280").c_str(), nullptr, 10),
@@ -185,14 +192,15 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
         }
         // BOYUT (WYSIWYG): genişlik tasarım değerinden — canvas SetNextItemWidth ile
         // AYNI değeri uygular; derlenen uygulama da birebir aynı genişlikte çizilir.
-        // (InputTextMultiline hariç — onun Size(w,h) zaten bağlı)
-        if (t != "InputTextMultiline")
+        // (Multiline hariç — onun Size(w,h) zaten bağlı)
+        if (t != "InputTextMultiline" && t != "TextBoxMultiline")
             Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
-        std::string defEv = (t == "InputText" || t == "InputTextMultiline") ? "TextChanged" : "ValueChanged";
+        std::string defEv = (t == "InputText" || t == "InputTextMultiline" || t == "TextBox" || t == "TextBoxMultiline") ? "TextChanged" : "ValueChanged";
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Draw()) " << HandlerOf(c->name, defEv) << "();\n";
-        ctx.decls << "    IGOD::" << t << " " << c->name << ";   // tasarım: " << StrOf(c, "Text", "") << "\n";
-        if (t == "InputText") {
+        // TextBox = ImGui::InputText sarmalayıcısı (IGOD::InputText) — ad M2God sözlüğü
+        ctx.decls << "    IGOD::" << (t == "TextBox" ? "InputText" : (t == "TextBoxMultiline" ? "InputTextMultiline" : t)) << " " << c->name << ";   // tasarım: " << StrOf(c, "Text", "") << "\n";
+        if (t == "InputText" || t == "TextBox") {
             auto it = c->events.find("EnterPressed");
             if (it != c->events.end() && !it->second.empty())
                 ctx.body << "    if (" << c->name << ".EnterPressed) " << it->second << "();\n";
@@ -241,29 +249,59 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
         ctx.decls << "    IGOD::ProgressBar " << c->name << ";\n";
     }
     else if (t == "Separator") {
+        // BOYUT UYGULA (W+H): gerçek ayraç — W×H dolgu çubuğu (IGOD::Separator).
+        // Canvas AYNI çubuğu AddRectFilled ile çizer (WYSIWYG).
+        Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "200").c_str(), nullptr, 10),
+                                        c->h ? c->h : (int)strtol(NumOf(c, "Height", "2").c_str(), nullptr, 10)));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
-        ctx.body << "    ImGui::Separator();\n";
+        ctx.body << "    " << c->name << ".Draw();\n";
+        ctx.decls << "    IGOD::Separator " << c->name << ";\n";
     }
     else if (t == "SeparatorText") {
+        // BOYUT UYGULA (W): çizgi w'ye kadar — IGOD::SeparatorText child-clip sarması.
+        Bind(ctx, c, "Text = " + ULabel(c, "Text", "Bölüm"));
+        Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
-        ctx.body << "    ImGui::SeparatorText(" << ULabel(c, "Text", "Bölüm") << ");\n";
+        ctx.body << "    " << c->name << ".Draw();\n";
+        ctx.decls << "    IGOD::SeparatorText " << c->name << ";\n";
     }
     else if (t == "Text" || t == "TextColored" || t == "BulletText" || t == "LabelText") {
         // kimliksiz çıktılar — ## soneki GÖRÜNÜR, bu yüzden düz metin (çakışma yok)
         std::string s = EscCppUtf8(StrOf(c, "Text", "Etiket"));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         if (t == "Text") {
-            if (c->GetB("Wrapped")) ctx.body << "    ImGui::TextWrapped(" << UPlain(StrOf(c, "Text", "Etiket")) << ");\n";
+            // BOYUT UYGULA (W): PushTextWrapPos — metin w'de kayar (canvas aynı).
+            if (c->w > 0) {
+                ctx.body << "    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + " << FNum((double)c->w) << ");\n";
+            }
+            if (c->GetB("Wrapped") && c->w <= 0) ctx.body << "    ImGui::TextWrapped(" << UPlain(StrOf(c, "Text", "Etiket")) << ");\n";
             else ctx.body << "    ImGui::Text(" << UPlain(StrOf(c, "Text", "Etiket")) << ");\n";
+            if (c->w > 0) ctx.body << "    ImGui::PopTextWrapPos();\n";
         }
         else if (t == "TextColored") {
             int r = (int)strtol(NumOf(c, "R", "255").c_str(), nullptr, 10);
             int g = (int)strtol(NumOf(c, "G", "200").c_str(), nullptr, 10);
             int b = (int)strtol(NumOf(c, "B", "80").c_str(), nullptr, 10);
+            if (c->w > 0) {
+                ctx.body << "    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + " << FNum((double)c->w) << ");\n";
+            }
             ctx.body << "    ImGui::TextColored(" << FVec4(r/255.0f, g/255.0f, b/255.0f, 1.0f) << ", " << UPlain(StrOf(c, "Text", "Renkli etiket")) << ");\n";
+            if (c->w > 0) ctx.body << "    ImGui::PopTextWrapPos();\n";
         }
-        else if (t == "BulletText") ctx.body << "    ImGui::BulletText(" << UPlain(StrOf(c, "Text", "Madde")) << ");\n";
-        else ctx.body << "    ImGui::LabelText(" << ULabel(c, "Text", "Alan") << ", " << UPlain(StrOf(c, "Value", "değer")) << ");\n";
+        else if (t == "BulletText") {
+            // BOYUT UYGULA (W): kaydırma yok → etiket w'ye sığdırılır (IGOD aynı).
+            Bind(ctx, c, "Text = " + UPlain(StrOf(c, "Text", "Madde")));
+            Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
+            ctx.body << "    " << c->name << ".Draw();\n";
+            ctx.decls << "    IGOD::BulletText " << c->name << ";\n";
+        }
+        else {
+            // LabelText — BOYUT UYGULA (W): değer öğe genişliğinin sağ ucunda
+            // hizalanır (CalcItemWidth). Canvas aynı SetNextItemWidth'ı uygular.
+            if (c->w > 0)
+                ctx.body << "    ImGui::SetNextItemWidth(" << FNum((double)c->w) << ");\n";
+            ctx.body << "    ImGui::LabelText(" << ULabel(c, "Text", "Alan") << ", " << UPlain(StrOf(c, "Value", "değer")) << ");\n";
+        }
     }
     else if (t == "PlotLines" || t == "PlotHistogram") {
         Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "PlotLines" ? "Grafik" : "Histogram"));
@@ -323,17 +361,22 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
     else if (t == "CollapsingHeader" || t == "TreeNode") {
         Bind(ctx, c, "Text = " + ULabel(c, "Text", t == "CollapsingHeader" ? "Başlık" : "Düğüm"));
         Bind(ctx, c, std::string("DefaultOpen = ") + (c->GetB("DefaultOpen") ? "true" : "false"));
+        // BOYUT UYGULA (W): başlık w'lik child bölgeye sınırlanır (IGOD aynı).
+        Bind(ctx, c, "Width = " + std::to_string(c->w > 0 ? c->w : 0));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
         ctx.body << "    if (" << c->name << ".Begin()) {\n";
         for (Ctrl* ch : m.ChildrenOf(const_cast<Ctrl*>(c))) EmitCtrl(ctx, ch);
-        ctx.body << "        " << c->name << ".End();\n";
         ctx.body << "    }\n";
+        ctx.body << "    " << c->name << ".End();   // child dengesi — her zaman\n";
         ctx.decls << "    IGOD::" << t << " " << c->name << ";\n";
     }
     else if (t == "TabBar") {
         Bind(ctx, c, "Text = " + ULabel(c, "Text", "Sekmeler"));   // ## sonekli tabbar kimliği
+        // BOYUT UYGULA (W+H): sekmeler W×H child bölgesine çizilir (canvas aynı).
+        Bind(ctx, c, "Size = " + FVec2(c->w ? c->w : (int)strtol(NumOf(c, "Width", "400").c_str(), nullptr, 10),
+                                        c->h ? c->h : (int)strtol(NumOf(c, "Height", "220").c_str(), nullptr, 10)));
         ctx.body << "    ImGui::SetCursorPos(" << pos << ");\n";
-        ctx.body << "    " << c->name << ".Begin();\n";
+        ctx.body << "    if (" << c->name << ".Begin()) {\n";
         std::string items = StrOf(c, "Items", "Genel|Ayarlar");
         for (auto& s : SplitW(Utf8ToWideStr(items), L'|')) {
             std::string title = WideStrToUtf8(s);
@@ -344,7 +387,8 @@ static void EmitCtrl(EmitCtx& ctx, const Ctrl* c) {
             }
             ctx.body << "        ImGui::EndTabItem();\n    }\n";
         }
-        ctx.body << "    " << c->name << ".End();\n";
+        ctx.body << "    }\n";
+        ctx.body << "    " << c->name << ".End();   // child dengesi — her zaman\n";
         ctx.decls << "    IGOD::TabBar " << c->name << ";\n";
     }
     else if (t == "Popup") {
@@ -494,7 +538,13 @@ std::string EmitFormH(const std::string& formName, const Model& m) {
     // ayrı bir ctx ile tarama)
     EmitCtx dctx;
     dctx.m = &m;   // KRİTİK: model bağlanmadan konteyner çocuk taraması null modelle çökerdi
-    for (Ctrl* c : m.ctrls) EmitCtrl(dctx, c);
+    // HATA DÜZELTİLDİ (5. tur): eski kod TÜM ctrls'i dolaşıyordu — konteyner
+    // EmitCtrl'i çocuklarını da özyinelemeli eklediğinden çocuklar İKİ KEZ
+    // decl edilip Form1.h'te çift bildirim (derleme hatası) üretiyordu.
+    // Button decl'i yorum olduğundan eski testler bunu yakalayamadı; TextBox
+    // gerçek bildirim üretince ortaya çıktı. Artık yalnız KÖK nesneler
+    // dolaşılır — konteyner özyinelemesi çocukları zaten ekler.
+    for (Ctrl* c : m.ctrls) if (!c->parent) EmitCtrl(dctx, c);
     o << dctx.decls.str();
     // handler prototipleri
     std::set<std::string> emitted;
@@ -539,6 +589,28 @@ std::string EmitGlobalH() {
 
 namespace IGOD {
 
+// —— ortak yardımcı ———————————————————————————————————————————————————
+// etiketi avail genişliğine sığdır (taşarsa "..." ile kısalt, UTF-8 güvenli).
+// Editör canvas'ı AYNI algoritmayı kullanır (WYSIWYG).
+inline std::string FitTextToWidth(const std::string& text, float avail) {
+    if (avail <= 8.0f) return text;
+    if (ImGui::CalcTextSize(text.c_str(), NULL, true).x <= avail) return text;
+    const std::string ell = "...";
+    float budget = avail - ImGui::CalcTextSize(ell.c_str()).x;
+    size_t i = 0;
+    while (i < text.size()) {
+        size_t len = 1;
+        unsigned char ch = (unsigned char)text[i];
+        if (ch >= 0xF0) len = 4; else if (ch >= 0xE0) len = 3; else if (ch >= 0xC0) len = 2;
+        if (i + len > text.size()) len = text.size() - i;
+        if (ImGui::CalcTextSize(text.c_str(), text.c_str() + i + len, true).x > budget) break;
+        i += len;
+    }
+    std::string out = text.substr(0, i);
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out + ell;
+}
+
 // —— nesne sarmalayıcıları ---------------------------------------------------
 struct Button {
     std::string Text;  ImVec2 SizeArg = ImVec2(0, 0);
@@ -559,18 +631,53 @@ struct Button {
 struct Checkbox {
     std::string Text;  bool Checked = false;
     bool Checked0 = false;         // tasarım başlangıcı (her karede senkron — editör WYSIWYG)
+    float Width = 0, Height = 0;   // tasarım boyutu (WYSIWYG — canvas aynı dönüşümü uygular)
     Checkbox() {}
     Checkbox(const std::string& t, bool v) : Text(t), Checked(v), Checked0(v) {}
     bool Draw() {
         if (Checked0) { Checked = true; Checked0 = false; }
         bool prev = Checked;
-        ImGui::Checkbox(Text.c_str(), &Checked);
+        // BOYUT (WYSIWYG): yükseklik → FramePadding ölçekleme (kare + satır büyür);
+        // genişlik → etiket sığdırma. Editör canvas'ı birebir aynı yapar.
+        bool padPush = false;
+        if (Height > 0) {
+            float padY = (Height - ImGui::GetFontSize()) * 0.5f;
+            if (padY >= 0.0f) {
+                ImVec2 fp = ImGui::GetStyle().FramePadding;
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fp.x, padY));
+                padPush = true;
+            }
+        }
+        float square = ImGui::GetFrameHeight();
+        std::string shown = Text;
+        if (Width > 0)
+            shown = FitTextToWidth(Text, Width - square - ImGui::GetStyle().FramePadding.x * 2.0f);
+        ImGui::Checkbox(shown.c_str(), &Checked);
+        if (padPush) ImGui::PopStyleVar();
         return Checked != prev;
     }
 };
 struct RadioButton {
     std::string Text;  bool Active = false;
-    bool Draw() { return ImGui::RadioButton(Text.c_str(), Active); }
+    float Width = 0, Height = 0;   // tasarım boyutu (WYSIWYG)
+    bool Draw() {
+        bool padPush = false;
+        if (Height > 0) {
+            float padY = (Height - ImGui::GetFontSize()) * 0.5f;
+            if (padY >= 0.0f) {
+                ImVec2 fp = ImGui::GetStyle().FramePadding;
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fp.x, padY));
+                padPush = true;
+            }
+        }
+        float square = ImGui::GetFrameHeight();
+        std::string shown = Text;
+        if (Width > 0)
+            shown = FitTextToWidth(Text, Width - square - ImGui::GetStyle().FramePadding.x * 2.0f);
+        bool clicked = ImGui::RadioButton(shown.c_str(), Active);
+        if (padPush) ImGui::PopStyleVar();
+        return clicked;
+    }
 };
 struct SliderFloat {
     std::string Text = "Değer";  float Value = 0, Min = 0, Max = 100;
@@ -704,6 +811,43 @@ struct ProgressBar {
         ImGui::ProgressBar(Value, Size, buf[0] ? buf : nullptr);
     }
 };
+// BOYUTLU AYRAÇ — W×H dolgu çubuğu (ImGuiCol_Separator rengiyle). Editör canvas'ı
+// AYNI çubuğu çizer (WYSIWYG). "Kullanıcı: seperator ince çubuk gibi, büyütüp
+// küçültemiyorum" — artık gerçek boyutlandırılabilir ayraç.
+struct Separator {
+    ImVec2 Size = ImVec2(200, 2);
+    void Draw() {
+        ImGui::Dummy(Size);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                          ImGui::GetColorU32(ImGuiCol_Separator));
+    }
+};
+// BOYUTLU METİN AYRAÇ — metin + w'ye kadar çizgi. ImGui::SeparatorText mevcut
+// pencere genişliğine yayıldığından w'lik sıfır-dolgu child'ına alınır.
+struct SeparatorText {
+    std::string Text = "Bölüm";  float Width = 0;   // 0 = mevcut genişlik
+    bool Wrapped = false;
+    void Draw() {
+        if (Width <= 0) { ImGui::SeparatorText(Text.c_str()); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::BeginChild((Text + "_stw").c_str(), ImVec2(Width, 0.0f), ImGuiChildFlags_AutoResizeY);
+        ImGui::SeparatorText(Text.c_str());
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+    }
+};
+// BOYUTLU MADDE METNİ — BulletText kaydırmayı yok sayar: genişlik etiketi
+// w'ye sığacak şekilde kısaltır (editör canvas'ı aynı FitTextToWidth'ı kullanır).
+struct BulletText {
+    std::string Text = "Madde";  float Width = 0;   // 0 = içerik genişliği
+    void Draw() {
+        std::string shown = Text;
+        if (Width > 0)
+            shown = FitTextToWidth(Text, Width - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f));
+        ImGui::BulletText("%s", shown.c_str());
+    }
+};
 struct PlotLines {
     std::string Text = "Grafik";  std::vector<float> Data;  float ScaleMin = 0, ScaleMax = 1; ImVec2 Size = ImVec2(280, 120);
     void Draw() {
@@ -763,24 +907,57 @@ struct Panel {
 };
 struct CollapsingHeader {
     std::string Text = "Başlık";  bool DefaultOpen = true;
+    float Width = 0;   // >0: başlık bu genişlikte sınırlanır (child-clip — WYSIWYG)
+    bool Wrapped = false, WasOpen = false;
     bool Begin() {
+        if (Width > 0) {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::BeginChild((Text + "_hcw").c_str(), ImVec2(Width, 0.0f), ImGuiChildFlags_AutoResizeY);
+            Wrapped = true;
+        }
         ImGuiTreeNodeFlags fl = DefaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : 0;
-        return ImGui::CollapsingHeader(Text.c_str(), fl);
+        WasOpen = ImGui::CollapsingHeader(Text.c_str(), fl);
+        return WasOpen;
     }
-    void End() {}
+    // HER ZAMAN çağrılır (üretim: if (Begin()){çocuklar} End();) — child dengesi
+    void End() { if (Wrapped) { ImGui::EndChild(); ImGui::PopStyleVar(); Wrapped = false; } }
 };
 struct TreeNode {
     std::string Text = "Düğüm";  bool DefaultOpen = false;
+    float Width = 0;   // >0: düğüm bu genişlikte sınırlanır (child-clip — WYSIWYG)
+    bool Wrapped = false, WasOpen = false;
     bool Begin() {
+        if (Width > 0) {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::BeginChild((Text + "_ncw").c_str(), ImVec2(Width, 0.0f), ImGuiChildFlags_AutoResizeY);
+            Wrapped = true;
+        }
         ImGuiTreeNodeFlags fl = DefaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : 0;
-        return ImGui::TreeNodeEx(Text.c_str(), fl);
+        WasOpen = ImGui::TreeNodeEx(Text.c_str(), fl);
+        return WasOpen;
     }
-    void End() { ImGui::TreePop(); }
+    // HER ZAMAN çağrılır — TreePop yalnız açıksa (dengeli)
+    void End() {
+        if (WasOpen) ImGui::TreePop();
+        if (Wrapped) { ImGui::EndChild(); ImGui::PopStyleVar(); Wrapped = false; }
+    }
 };
 struct TabBar {
-    std::string Text = "Sekmeler";
-    bool Begin() { return ImGui::BeginTabBar((Text + "_tb").c_str(), ImGuiTabBarFlags_None); }
-    void End() { ImGui::EndTabBar(); }
+    // BOYUT (WYSIWYG): sekmeler W×H sıfır-dolgu child bölgesine çizilir —
+    // genişlik VE yükseklik tasarım boyutu. Editör canvas'ı aynı sarmalama.
+    std::string Text = "Sekmeler";  ImVec2 Size = ImVec2(0, 0);
+    bool BarOk = false;
+    bool Begin() {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::BeginChild((Text + "_tbw").c_str(), Size, ImGuiChildFlags_None);
+        BarOk = ImGui::BeginTabBar((Text + "_tb").c_str(), ImGuiTabBarFlags_None);
+        return BarOk;
+    }
+    void End() {
+        if (BarOk) ImGui::EndTabBar();
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+    }
 };
 struct ModalPopup {
     std::string Text = "Pencere";  bool OpenReq = false;

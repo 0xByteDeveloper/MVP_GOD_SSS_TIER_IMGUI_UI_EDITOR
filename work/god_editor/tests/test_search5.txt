@@ -1,0 +1,10 @@
+# Araç kutusu ARAMA görsel testi: "label" yaz → yalnız eşleşen öğeler görünür
+snap off
+wait 20
+click 130 550
+wait 5
+type label
+wait 30
+screenshot state_search1.bmp
+wait 5
+quit

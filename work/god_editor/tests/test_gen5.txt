@@ -1,0 +1,44 @@
+# 5. TUR ÜRETİM TESTİ — tüm yeni boyutlanabilir nesneler kod üretiminde:
+# TabBar(W×H) + sekmeye yerleşen çocuk, TextBox, LabelText(W), Text wrap(W),
+# BulletText(W), Checkbox(W×H), Separator(W×H), SeparatorText(W), RadioButton(W×H),
+# CollapsingHeader(W). Ardından MinGW derlemesi run_tests.sh'te yapılır.
+projname DenemImgui5
+snap off
+wait 15
+form 700 560
+add TabBar 30 30
+set tabBar1 Width 400
+set tabBar1 Height 200
+wait 15
+arm Button
+wait 5
+clickobj tabBar1
+wait 10
+set button1 Text "Sekme İçi Buton"
+add TextBox 30 260
+set textBox1 Width 260
+add LabelText 30 300
+set labelText1 Width 200
+add Text 30 340
+set text1 Text "Kaydırma testi uzun metin kırılıyor"
+set text1 Width 180
+add BulletText 240 260
+set bulletText1 Width 150
+add Checkbox 240 300
+set checkbox1 Width 180
+set checkbox1 Height 30
+add Separator 240 350
+set separator1 Width 280
+set separator1 Height 6
+add SeparatorText 240 380
+set separatorText1 Width 240
+add RadioButton 240 420
+set radioButton1 Width 160
+set radioButton1 Height 30
+add CollapsingHeader 30 400
+set collapsingHeader1 Width 240
+wait 15
+gen Z:/home/z/my-project/work/gen5
+wait 8
+save state_gen5.imgod
+quit

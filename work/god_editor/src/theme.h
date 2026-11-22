@@ -28,6 +28,8 @@ struct ThemeInfo {
 const std::vector<ThemeInfo>& List();
 const char* NameOf(int id);
 void Apply(int id);                     // ImGui stiline uygular (ImGui::CreateContext sonrası)
+void ApplyChrome();                   // EDİTÖR kabuğu vurgularını nötr griye çevirir (5. tur:
+                                        // her temada mavi vurgu şikayeti — canvas/üretim etkilenmez)
 
 // üretilen koda taşınan tema çağrısı ("ImGui::StyleColorsDark();" veya "IGOD::ApplyGodOpsTheme();")
 std::string GenThemeApiCall(int id);

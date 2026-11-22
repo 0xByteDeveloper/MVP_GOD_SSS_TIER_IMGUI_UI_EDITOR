@@ -35,8 +35,10 @@ objsize sliderFloat1 state_wsz.txt
 set inputText1 Width 250
 wait 12
 objsize inputText1 state_wsz.txt
-# 5) Checkbox: Width elle 500 → İÇERİK boyutuna döner (otomatik — hayalet yok)
+# 5) Checkbox (5. TUR): Width 500 → kontrol alanı 500'de KALIR + yükseklik
+#    ölçeklenince kare büyür (FULL boyutlandırma — kullanıcı talebi)
 set checkbox1 Width 500
+set checkbox1 Height 36
 wait 12
 objsize checkbox1 state_wsz.txt
 # 6) Table genişliği görselde (outer_size.x — etiket yok, mutlak)

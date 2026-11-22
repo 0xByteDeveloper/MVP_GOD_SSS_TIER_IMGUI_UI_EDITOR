@@ -172,6 +172,61 @@ void Apply(int id) {
 }
 
 // ---------------------------------------------------------------------------
+//  EDİTÖR KROMASI — nötr gri vurgu paleti (5. tur kullanıcı talebi).
+//
+//  Kullanıcı: "herşey çok mavi gözüküyor... üstte seçili form mavi yerine
+//  başka renk olabilir... özellikler/olaylar sekmesi başka renk olabilir ama
+//  arkaplanla uyumlu (gri)... özellik açıcılar (görünüm/yerleşim/veri/renk/
+//  stil) mavi yerine başka renk olsa daha iyi ama HEPSİ AYNI renk olsun...
+//  textboxların içi full mavi yerine grimsi birşey olabilir"
+//
+//  Çözüm: tema seçildikten SONRA editör kabuğunun vurgu renkleri nötr griye
+//  çevrilir. WYSIWYG bozulmaz: canvas, formu çizmeden önce üretim temasını
+//  PushProduction ile iter (bu değerler canvas içine sızmaz).
+void ApplyChrome() {
+    ImGuiStyle& s = ImGui::GetStyle();
+    ImVec4* c = s.Colors;
+    // vurgular (başlık satırları, seçilebilir seçim, sekme seçimi) — nötr gri
+    c[ImGuiCol_Header]             = ImVec4(0.240f, 0.240f, 0.240f, 0.78f);
+    c[ImGuiCol_HeaderHovered]      = ImVec4(0.310f, 0.310f, 0.310f, 0.82f);
+    c[ImGuiCol_HeaderActive]       = ImVec4(0.370f, 0.370f, 0.370f, 1.00f);
+    // sekmeler (Özellikler/Olaylar, form sekmeleri) — gri aile
+    c[ImGuiCol_Tab]                = ImVec4(0.155f, 0.155f, 0.155f, 1.00f);
+    c[ImGuiCol_TabHovered]         = ImVec4(0.340f, 0.340f, 0.340f, 1.00f);
+    c[ImGuiCol_TabSelected]        = ImVec4(0.250f, 0.250f, 0.250f, 1.00f);
+    c[ImGuiCol_TabDimmed]          = ImVec4(0.125f, 0.125f, 0.125f, 1.00f);
+    c[ImGuiCol_TabDimmedSelected] = ImVec4(0.190f, 0.190f, 0.190f, 1.00f);
+    // giriş çerçeveleri (özellik paneli metin kutuları) — "textboxların içi
+    // full mavi yerine grimsi": mavi geçirgen yerine gri geçirgen
+    c[ImGuiCol_FrameBg]            = ImVec4(0.220f, 0.220f, 0.220f, 0.62f);
+    c[ImGuiCol_FrameBgHovered]     = ImVec4(0.280f, 0.280f, 0.280f, 0.88f);
+    c[ImGuiCol_FrameBgActive]      = ImVec4(0.340f, 0.340f, 0.340f, 1.00f);
+    // düğmeler — "yeni form / sil / yeni ad" düğmeleri özelliğe göre renklendirme
+    // yerel push'larla yapılır (ui_editor); genel düğme paleti nötr kalır
+    c[ImGuiCol_Button]             = ImVec4(0.310f, 0.310f, 0.310f, 0.62f);
+    c[ImGuiCol_ButtonHovered]      = ImVec4(0.390f, 0.390f, 0.390f, 0.86f);
+    c[ImGuiCol_ButtonActive]       = ImVec4(0.470f, 0.470f, 0.470f, 1.00f);
+    // onay kutusu işareti + kaydırma tutamaçları — mavi değil nötr/beyazımsı
+    c[ImGuiCol_CheckMark]          = ImVec4(0.880f, 0.880f, 0.880f, 1.00f);
+    c[ImGuiCol_SliderGrab]         = ImVec4(0.430f, 0.430f, 0.430f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]   = ImVec4(0.530f, 0.530f, 0.530f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]      = ImVec4(0.290f, 0.290f, 0.290f, 0.90f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.370f, 0.370f, 0.370f, 0.95f);
+    c[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.440f, 0.440f, 0.440f, 1.00f);
+    // metin seçimi + başlık çubukları + yeniden boyutlandırma tutamçları — nötr
+    c[ImGuiCol_TextSelectedBg]    = ImVec4(0.360f, 0.360f, 0.360f, 0.45f);
+    c[ImGuiCol_TitleBg]            = ImVec4(0.110f, 0.110f, 0.110f, 1.00f);
+    c[ImGuiCol_TitleBgActive]      = ImVec4(0.155f, 0.155f, 0.155f, 1.00f);
+    c[ImGuiCol_TitleBgCollapsed]   = ImVec4(0.090f, 0.090f, 0.090f, 0.85f);
+    c[ImGuiCol_ResizeGrip]         = ImVec4(0.290f, 0.290f, 0.290f, 0.20f);
+    c[ImGuiCol_ResizeGripHovered]  = ImVec4(0.390f, 0.390f, 0.390f, 0.67f);
+    c[ImGuiCol_ResizeGripActive]   = ImVec4(0.480f, 0.480f, 0.480f, 0.95f);
+    c[ImGuiCol_NavCursor]          = ImVec4(0.310f, 0.310f, 0.310f, 1.00f);
+    c[ImGuiCol_MenuBarBg]          = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);
+    c[ImGuiCol_DragDropTarget]     = ImVec4(0.570f, 0.570f, 0.570f, 0.90f);
+}
+
+// ---------------------------------------------------------------------------
 //  WYSIWYG üretim teması — canvas, formu üretilecek uygulamanın temasıyla çizer
 static std::vector<ImGuiStyle> s_styleStack;
 void PushProduction(int id) {

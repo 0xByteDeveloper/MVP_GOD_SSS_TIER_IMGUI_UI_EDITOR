@@ -122,10 +122,10 @@ check "inputText1 genişlik +50 GÖRSEL (delta ölçüm)" 'python3 -c "
 import re;t=open(\"Bin/state_wsz.txt\").read()
 v=[int(x) for x in re.findall(r\"inputText1:(\d+)x\",t)]
 exit(0 if len(v)>=2 and 47<=v[1]-v[0]<=53 else 1)"'
-check "checkbox1 genişlik İÇERİĞE döndü (otomatik — hayalet boyut yok)" 'python3 -c "
+check "checkbox1 alan genişliği 500 KALDI + yükseklik 36 ölçeklendi (5. tur FULL boyut)" 'python3 -c "
 import re;t=open(\"Bin/state_wsz.txt\").read()
-v=[int(x) for x in re.findall(r\"checkbox1:(\d+)x\",t)]
-exit(0 if len(v)>=2 and -2<=v[1]-v[0]<=2 else 1)"'
+v=[(int(a),int(b)) for a,b in re.findall(r\"checkbox1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=2 and 496<=v[1][0]<=504 and 34<=v[1][1]<=38 else 1)"'
 check "table1 genişlik 360 GÖRSEL (outer_size — SON ölçüm)" 'python3 -c "
 import re;t=open(\"Bin/state_wsz.txt\").read()
 v=[int(x) for x in re.findall(r\"table1:(\d+)x\",t)]
@@ -139,6 +139,63 @@ import json;d=json.load(open(\"Bin/state_wsize.imgod\"))
 cs=d[\"Forms\"][0][\"Ctrls\"]
 co=[c for c in cs if c[\"Type\"]==\"Combo\"][0]; li=[c for c in cs if c[\"Type\"]==\"ListBox\"][0]
 exit(0 if 396<=co[\"W\"]<=404 and 258<=li[\"W\"]<=262 and 178<=li[\"H\"]<=182 else 1)"'
+
+
+echo "=== TEST 11: 5. TUR ETKİLEŞİMLER (TabBar/label/checkbox/separator/TextBox/form-tık/groupbox-damak) ==="
+run_editor ../tests/test_round5.txt 25
+check "form boş alan tıkı formu SEÇTİ (SELOK -)" 'grep -q "SELOK -" Bin/state_r5_form.txt'
+check "tabBar1 başlangıç 400x220 (FULL bölge)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"tabBar1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=1 and 395<=v[0][0]<=405 and 215<=v[0][1]<=225 else 1)"'
+check "tabBar1 300x150 GÖRSEL (5. tur #1 — child bölge boyutu)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"tabBar1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=2 and 295<=v[1][0]<=305 and 145<=v[1][1]<=155 else 1)"'
+check "labelText1 180'e küçüldü (değer sağa hizalı — 5. tur #3)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[int(x) for x in re.findall(r\"labelText1:(\d+)x\",t)]
+exit(0 if len(v)>=2 and 250<=v[0]-v[1]<=380 else 1)"'
+check "text1 wrap 140: genişlik sınırlı + çok satır (5. tur #4)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"text1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=2 and 110<=v[1][0]<=145 and v[1][1]>=50 else 1)"'
+check "checkbox1 200x34 GÖRSEL (kare büyüdü — 5. tur #4)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"checkbox1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=1 and 195<=v[0][0]<=205 and 32<=v[0][1]<=36 else 1)"'
+check "separator1 başlangıç 200x2 + 300x8 GÖRSEL (5. tur #7)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"separator1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=2 and 195<=v[0][0]<=205 and v[0][1]<=4 and 295<=v[1][0]<=305 and 6<=v[1][1]<=10 else 1)"'
+check "textBox1 VAR (~200 genişlik — 5. tur #6)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[int(x) for x in re.findall(r\"textBox1:(\d+)x\",t)]
+exit(0 if len(v)>=1 and 229<=v[0]<=243 else 1)"'
+check "GroupBox İÇİNE yerleşti (PARENTOK — 5. tur #2)" 'grep -q "PARENTOK button1->groupBox1" Bin/state_r5_parent.txt'
+check "groupbox İÇİNDEKİ buton tıkla→buton seçildi (SELOK button1 — derinlik hit-testi)" 'grep -q "SELOK button1" Bin/state_r5.txt'
+check "buton İÇİNDE +30 resize (150x28)" 'python3 -c "
+import re;t=open(\"Bin/state_r5sz.txt\").read()
+v=[(int(a),int(b)) for a,b in re.findall(r\"button1:(\d+)x(\d+)\",t)]
+exit(0 if len(v)>=1 and 145<=v[0][0]<=155 else 1)"'
+check "kayıt: 10 nesne (r5)" 'python3 -c "import json;d=json.load(open(\"Bin/state_r5.imgod\"));exit(0 if len(d[\"Forms\"][0][\"Ctrls\"])==9 else 1)"'
+
+echo "=== TEST 12: 5. TUR ÜRETİM (tüm yeni boyutlar kodda) + MinGW DERLEMESİ ==="
+rm -rf /home/z/my-project/work/gen5
+run_editor ../tests/test_gen5.txt 60
+check "üretim oluştu" '[ -s /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp ]'
+check "TabBar Size bağlı (W×H)" 'grep -q "tabBar1.Size = ImVec2(400, 200);" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "TabBar child sarması + denge End" 'grep -q "tabBar1.End();   // child dengesi" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "sekmeye yerleşen çocuk (TabOwner=Genel aktif sekme)" 'grep -q "Sekme İçi Buton" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "TextBox → IGOD::InputText sarması + Width" 'grep -q "IGOD::InputText textBox1;" /home/z/my-project/work/gen5/DenemImgui5/Form1.h && grep -q "textBox1.Width = 260;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "LabelText genişliği SetNextItemWidth (200.0f)" 'grep -q "SetNextItemWidth(200.0f);" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "Text wrap PushTextWrapPos (GetCursorPos + 180.0f)" 'grep -q "PushTextWrapPos(ImGui::GetCursorPos().x + 180.0f);" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "BulletText IGOD sarması + Width" 'grep -q "IGOD::BulletText bulletText1;" /home/z/my-project/work/gen5/DenemImgui5/Form1.h && grep -q "bulletText1.Width = 150;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "Checkbox W+H bağlı" 'grep -q "checkbox1.Width = 180;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp && grep -q "checkbox1.Height = 30;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "Separator W×H (IGOD::Separator + Size)" 'grep -q "IGOD::Separator separator1;" /home/z/my-project/work/gen5/DenemImgui5/Form1.h && grep -q "separator1.Size = ImVec2(280, 6);" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "SeparatorText W + RadioButton W+H + Header W" 'grep -q "separatorText1.Width = 240;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp && grep -q "radioButton1.Height = 30;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp && grep -q "collapsingHeader1.Width = 240;" /home/z/my-project/work/gen5/DenemImgui5/Form1.cpp'
+check "Global.h: FitTextToWidth + yeni yapılar" 'grep -q "FitTextToWidth" /home/z/my-project/work/gen5/DenemImgui5/Global.h && grep -q "struct Separator {" /home/z/my-project/work/gen5/DenemImgui5/Global.h && grep -q "struct BulletText {" /home/z/my-project/work/gen5/DenemImgui5/Global.h'
+check "MinGW DERLEMESİ: üretilen proje derlendi (exe oluştu)" 'cd /home/z/my-project/work/gen5/DenemImgui5 && CXX=/home/z/my-project/tools/__debroot/usr/bin/x86_64-w64-mingw32-g++-posix PATH=/home/z/my-project/tools/__debroot/usr/bin:$PATH bash build_mingw.sh >/tmp/gen5build.log 2>&1 && [ -s Bin/DenemImgui5.exe ]'
 
 echo ""
 echo "=========================================="

@@ -1,0 +1,8 @@
+# Araç kutusu ARAMA görsel testi (canlı yakalama): "label" yaz
+snap off
+wait 20
+click 130 550
+wait 5
+type label
+wait 100000
+quit

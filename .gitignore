@@ -1,2 +1,14 @@
 skills/
 node_modules/
+# çalışma ortamı kalıntıları (izlenmez):
+work/.wine64/
+work/_debs/
+work/gen_target/
+work/gen5/
+work/DenemImgui_final/
+work/denem_target/
+work/pkg_stage/
+work/shot/
+tool-results/
+*.bmp
+*.log

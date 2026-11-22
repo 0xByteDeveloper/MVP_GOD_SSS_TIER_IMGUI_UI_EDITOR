@@ -247,19 +247,27 @@ static void DrawToolbox(ImVec2 min, ImVec2 max) {
     ImGui::TextUnformatted("Ara (kategori/nesne):");
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##tbs", search, sizeof search);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Yazd\303\247\303\247\303\247\303\262nca yaln\303\247z\303\247 e\303\247le\303\247en \303\266\304\237eler g\303\266r\303\274n\303\274r — \303\266r. \"label\", \"button\", \"slider\"");
     ImGui::Separator();
+    // HATA DÜZELTİLDİ (5. tur: "arama \303\247al\303\247\303\250\303\250m\303\250yor galiba, label yaz\303\264yorum, button/sliderint
+    // gibi \303\250eyler de g\303\266z\303\274k\303\274yor"): eski filtre SADECE kategori bazlıydı — bir \303\266\304\237e
+    // e\303\247lerse kategorideki T\303\234M \303\266\304\237eler (button, sliderint...) g\303\266r\303\274n\303\274yordu.
+    // Art\303\247k \303\266\304\237e bazlı: yaln\303\247z ad\303\247 ya da kategorisi aramayla e\303\247le\303\247en \303\266\304\237eler listelenir.
+    std::wstring sw = LowerW(Utf8ToWideStr(std::string(search)));
+    bool anyVisible = false;
     for (auto& cat : g_catalog.categories) {
-        // arama filtresi
-        bool show = search[0] == 0;
+        std::vector<std::string> visible;
+        std::wstring catLow = LowerW(Utf8ToWideStr(cat));
         for (auto& e : g_catalog.catElements[cat]) {
             std::wstring low = LowerW(Utf8ToWideStr(e));
-            std::wstring sw = LowerW(Utf8ToWideStr(std::string(search)));
-            if (low.find(sw) != std::wstring::npos || cat.find(search) != std::string::npos) show = true;
+            bool show = sw.empty() || low.find(sw) != std::wstring::npos || catLow.find(sw) != std::wstring::npos;
+            if (show) visible.push_back(e);
         }
-        if (!show) continue;
+        if (!sw.empty() && visible.empty()) continue;   // arama: e\303\247le\303\247meyen kategori tamamen gizli
+        anyVisible = anyVisible || !visible.empty();
         ImGui::SetNextItemOpen(true, ImGuiCond_Always);
         if (ImGui::TreeNodeEx(cat.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-            for (auto& e : g_catalog.catElements[cat]) {
+            for (auto& e : visible) {
                 ImGui::PushID(e.c_str());
                 // tık = YERLEŞTİRME MODU (arm — ESC iptal); çift tık = aktif forma direkt ekle
                 if (ImGui::Selectable(e.c_str(), canvas::IsArmed() && canvas::g_armTool == e,
@@ -284,6 +292,8 @@ static void DrawToolbox(ImVec2 min, ImVec2 max) {
             ImGui::TreePop();
         }
     }
+    if (!sw.empty() && !anyVisible)
+        ImGui::TextDisabled("E\303\247le\303\247en nesne yok — \303\266r. \"button\", \"text\", \"panel\"");
     ImGui::End();
 }
 
@@ -373,7 +383,17 @@ static void DrawFormList(ImVec2 min, ImVec2 max) {
         ImGui::PushID((int)i);
         size_t nObj = ((int)i == forms::ActiveIndex()) ? g_model.ctrls.size() : f->model.ctrls.size();
         std::string line = f->name + "   (" + std::to_string(nObj) + " nesne)";
-        if (ImGui::Selectable(line.c_str(), (int)i == forms::ActiveIndex())) forms::SwitchTo((int)i);
+        bool active = (int)i == forms::ActiveIndex();
+        // 5. tur: seçili form mavi yerine KOYU GRI (siyaha yakın) — arka planla uyumlu;
+        // seçilmeyen satır normal kalır. (Kullanıcı: "se\303\247ili olanda koyu gri yani
+        // siyaha yak\304\261n gri olabilir")
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.160f, 0.160f, 0.160f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.160f, 0.160f, 0.160f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.160f, 0.160f, 0.160f, 1.00f));
+        }
+        if (ImGui::Selectable(line.c_str(), active)) forms::SwitchTo((int)i);
+        if (active) ImGui::PopStyleColor(3);
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
             s_renameInit = false;                      // popup açılırken tampon tazelenecek
             ImGui::OpenPopup("Yeniden Adland\304\261r");
@@ -381,11 +401,25 @@ static void DrawFormList(ImVec2 min, ImVec2 max) {
         ImGui::PopID();
     }
     ImGui::Separator();
-    if (ImGui::Button("+ Yeni Form")) { forms::NewForm(); s_status = "Yeni form eklendi"; }
+    // 5. tur: "alt\304\261ndaki butonlar \303\266zelli\304\237e g\303\266re kendi renkleri olabilir" —
+    // Yeni Form = yeşilimsi, Sil = kırmızımsı, Yen. Ad = nötr. Hepsi arka planla uyumlu.
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.38f, 0.22f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.50f, 0.28f, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.30f, 0.62f, 0.35f, 1.00f));
+        if (ImGui::Button("+ Yeni Form")) { forms::NewForm(); s_status = "Yeni form eklendi"; }
+        ImGui::PopStyleColor(3);
+    }
     ImGui::SameLine();
-    ImGui::BeginDisabled(forms::Count() <= 1);
-    if (ImGui::Button("Sil")) { forms::DeleteAt(forms::ActiveIndex()); }
-    ImGui::EndDisabled();
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.52f, 0.16f, 0.14f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.68f, 0.22f, 0.19f, 0.95f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.82f, 0.28f, 0.24f, 1.00f));
+        ImGui::BeginDisabled(forms::Count() <= 1);
+        if (ImGui::Button("Sil")) { forms::DeleteAt(forms::ActiveIndex()); }
+        ImGui::EndDisabled();
+        ImGui::PopStyleColor(3);
+    }
     ImGui::SameLine();
     if (ImGui::Button("Yen. Ad")) { s_renameInit = false; ImGui::OpenPopup("Yeniden Adland\304\261r"); }
     if (ImGui::BeginPopup("Yeniden Adland\304\261r")) {
@@ -742,6 +776,99 @@ static void SelftestStep() {
                 s_status = "objsize: bulunamadi " + n;
             }
         }
+        else if (cmd == "type") {
+            // type <metin> — WM_CHAR dizisi enjekte (odaklı InputText'e yazma testi)
+            std::string s; std::getline(iss, s); s = TrimA(s);
+            HWND hwnd = (HWND)g_mainHwnd;
+            if (hwnd && !s.empty()) {
+                for (unsigned char ch : s) PostMessageA(hwnd, WM_CHAR, (WPARAM)ch, 0);
+                s_status = "type " + s;
+            }
+        }
+        else if (cmd == "screenshot") {
+            // screenshot <yol> — editör penceresini BMP olarak yakala (görsel doğrulama:
+            // tema kroması, araç kutusu arama, canvas WYSIWYG incelemesi)
+            std::string p; std::getline(iss, p); p = TrimA(p);
+            HWND hwnd = (HWND)g_mainHwnd;
+            if (hwnd && !p.empty()) {
+                RECT rc; GetWindowRect(hwnd, &rc);
+                int w = rc.right - rc.left, h = rc.bottom - rc.top;
+                HDC hdcScreen = GetDC(nullptr);
+                HDC hdcMem = CreateCompatibleDC(hdcScreen);
+                HBITMAP hbmp = CreateCompatibleBitmap(hdcScreen, w, h);
+                HGDIOBJ old = SelectObject(hdcMem, hbmp);
+                BitBlt(hdcMem, 0, 0, w, h, hdcScreen, rc.left, rc.top, SRCCOPY);
+                BITMAPINFO bmi = {};
+                bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                bmi.bmiHeader.biWidth = w; bmi.bmiHeader.biHeight = -h;   // üstten-aşağı
+                bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 24;
+                bmi.bmiHeader.biCompression = BI_RGB;
+                int stride = (w * 3 + 3) & ~3;
+                std::vector<unsigned char> px((size_t)stride * h);
+                GetDIBits(hdcMem, hbmp, 0, h, px.data(), &bmi, DIB_RGB_COLORS);
+                BITMAPFILEHEADER fh = {};
+                fh.bfType = 0x4D42;
+                fh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+                fh.bfSize = fh.bfOffBits + (DWORD)(stride * h);
+                FILE* f = fopen(p.c_str(), "wb");
+                if (f) {
+                    fwrite(&fh, 1, sizeof fh, f);
+                    fwrite(&bmi.bmiHeader, 1, sizeof(BITMAPINFOHEADER), f);
+                    fwrite(px.data(), 1, px.size(), f);
+                    fclose(f);
+                    s_status = "screenshot " + p;
+                } else s_status = "screenshot: dosya a\303\247\304\261lamad\304\261";
+                SelectObject(hdcMem, old);
+                DeleteObject(hbmp);
+                DeleteDC(hdcMem);
+                ReleaseDC(nullptr, hdcScreen);
+            }
+        }
+        else if (cmd == "clickform") {
+            // clickform <fx> <fy> — FORM-göreli koordinata tıkla (boş alan = form
+            // seçimi testi; koordinat hesabına gerek yok — GetFormRect kancası)
+            int fx, fy; iss >> fx >> fy;
+            HWND hwnd = (HWND)g_mainHwnd;
+            float rx, ry, rw, rh;
+            if (hwnd) {
+                canvas::GetFormRect(&rx, &ry, &rw, &rh);
+                int cx = (int)rx + fx, cy = (int)ry + fy;
+                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(cx, cy));
+                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cx, cy));
+                Inject(1, WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
+                s_status = "clickform " + std::to_string(fx) + "," + std::to_string(fy);
+            }
+        }
+        else if (cmd == "expectsel") {
+            // expectsel <isim|-> — birincil seçimi doğrula ("-" = form seçili)
+            std::string n; iss >> n;
+            Ctrl* p = g_model.Primary();
+            std::string actual = (p && !g_model.formSelected) ? p->name : "-";
+            s_status = (n == actual) ? ("SELOK " + actual) : ("SELFAIL " + actual + " (" + n + " bekleniyordu)");
+        }
+        else if (cmd == "clickobj") {
+            // clickobj <isim> — nesnenin GERÇEK çizim dikdörtgeninin ortasına tık
+            // (yerleştirme/seçim testleri — koordinat hesabına gerek yok)
+            std::string n; iss >> n;
+            HWND hwnd = (HWND)g_mainHwnd;
+            float rx, ry, rw, rh;
+            if (hwnd && canvas::ObjRectOf(n, &rx, &ry, &rw, &rh)) {
+                int cx = (int)(rx + rw * 0.5f), cy = (int)(ry + rh * 0.5f);
+                Inject(0, WM_MOUSEMOVE, 0, MAKELPARAM(cx, cy));
+                Inject(0, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(cx, cy));
+                Inject(1, WM_LBUTTONUP, 0, MAKELPARAM(cx, cy));
+                s_status = "clickobj " + n;
+            }
+        }
+        else if (cmd == "expectparent") {
+            // expectparent <çocuk> <ebeveyn|-> — parent ilişkisi doğrulaması (test kancası)
+            std::string childName, parentName;
+            iss >> childName >> parentName;
+            Ctrl* cc = g_model.FindByName(childName);
+            std::string actual = cc && cc->parent ? cc->parent->name : "-";
+            s_status = (parentName == actual) ? ("PARENTOK " + childName + "->" + actual)
+                                              : ("PARENTFAIL " + childName + "->" + actual + " (" + parentName + " bekleniyordu)");
+        }
         else if (cmd == "quit") { PostQuitMessage(0); s_selftestActive = false; return; }
     }
     s_selftestActive = false;
@@ -827,6 +954,8 @@ void Draw(EditorState* es, ImGuiIO& io) {
                 if (ImGui::MenuItem(t.name, nullptr, s_editorTheme == t.id)) {
                     s_editorTheme = t.id;
                     theme::Apply(t.id);
+                    theme::ApplyChrome();   // 5. tur: her temada editör vurguları nötr gri (mavi şikayeti)
+                    s_status = std::string("Edit\303\266r temas\304\261: ") + t.name + " (vurgular n\303\266tr gri — \303\274retim temas\304\261 canvas'ta WYSIWYG)";
                 }
             ImGui::EndMenu();
         }

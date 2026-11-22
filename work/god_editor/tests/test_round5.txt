@@ -1,0 +1,93 @@
+# 5. TUR HATA PAKETİ TESTLERİ — kullanıcı raporları:
+#  1) TabBar boyutlanamıyor            → FULL (W×H child bölgesi)
+#  2) GroupBox/Panel içine obje         → derinlik tabanlı hit-test (çocuk seçilebilir)
+#  3) LabelText kısaltılamıyor          → W (değer sağa hizalanır)
+#  4) text/bullettext/colored/checkbox  → W / FULL boyutlandırma
+#  5) form boş alan tıkı formu seçmiyor → canvas nokta testi
+#  6) TextBox yok                        → katalogda
+#  7) Separator ince çubuk               → W×H dolgu çubuğu
+#  8) Araç kutusu arama öğe bazlı       (görsel doğrulama + kod incelemesi)
+#  9) Editör kroması nötr gri            (görsel doğrulama)
+snap off
+wait 15
+form 760 620
+
+# ---- 1) FORM BOŞ ALAN TIKLAMASI = FORM SEÇİMİ (5. tur #5) ----
+clickform 300 40
+wait 12
+expectsel -
+statusfile state_r5_form.txt
+
+# ---- 2) TABBAR FULL BOYUT (5. tur #1) ----
+add TabBar 30 30
+wait 20
+objsize tabBar1 state_r5sz.txt
+set tabBar1 Width 300
+set tabBar1 Height 150
+wait 15
+objsize tabBar1 state_r5sz.txt
+
+# ---- 3) LABELTEXT GENİŞLİK (5. tur #3) ----
+add LabelText 30 220
+wait 10
+objsize labelText1 state_r5sz.txt
+set labelText1 Width 180
+wait 12
+objsize labelText1 state_r5sz.txt
+
+# ---- 4) TEXT WRAP GENİŞLİK (5. tur #4) ----
+add Text 30 260
+set text1 Text "Bu oldukça uzun bir metin ve kaydırma genişliğinde kırılmalı"
+wait 10
+objsize text1 state_r5sz.txt
+set text1 Width 140
+wait 12
+objsize text1 state_r5sz.txt
+
+# ---- 5) BULLETTEXT kaydı (5. tur #4) ----
+add BulletText 240 260
+wait 10
+objsize bulletText1 state_r5sz.txt
+
+# ---- 6) CHECKBOX FULL (5. tur #4) ----
+add Checkbox 240 300
+set checkbox1 Width 200
+set checkbox1 Height 34
+wait 12
+objsize checkbox1 state_r5sz.txt
+
+# ---- 7) SEPARATOR W×H DOLGU ÇUBUĞU (5. tur #7) ----
+add Separator 240 360
+wait 10
+objsize separator1 state_r5sz.txt
+set separator1 Width 300
+set separator1 Height 8
+wait 12
+objsize separator1 state_r5sz.txt
+
+# ---- 8) TEXTBOX VAR MI (5. tur #6) ----
+add TextBox 240 400
+wait 10
+objsize textBox1 state_r5sz.txt
+
+# ---- 9) GROUPBOX İÇİNE YERLEŞTİRME + ÇOCUK SEÇİMİ (5. tur #2) ----
+add GroupBox 30 420
+wait 20
+arm Button
+wait 5
+clickobj groupBox1
+wait 12
+expectparent button1 groupBox1
+statusfile state_r5_parent.txt
+# çocuk SEÇİMİ: groupbox içindeki butona tıkla → BUTON seçilmeli (konteyner değil)
+clickobj button1
+wait 12
+expectsel button1
+statusfile state_r5.txt
+# çocuk İÇİNDE tutamçla boyutlandırma (+30 genişlik)
+dragobj button1 30 0
+wait 12
+objsize button1 state_r5sz.txt
+save state_r5.imgod
+wait 5
+quit

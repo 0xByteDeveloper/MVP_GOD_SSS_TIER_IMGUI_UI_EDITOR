@@ -192,16 +192,26 @@ int SizeCapOf(const Ctrl* c) {
     if (!c) return SIZECAP_AUTO;
     const std::string& t = c->type;
     if (t == "Button")          return c->GetB("Small") ? SIZECAP_AUTO : SIZECAP_FULL; // SmallButton içerik ölçer
+    // HATA DÜZELTİLDİ (5. tur: "checkbox/radio büyütüp küçültemiyorum"): kare ve
+    // satır yüksekliği FramePadding ölçeklemesiyle, genişlik etiket kısaltma +
+    // kontrol alanıyla uygulanır (canvas ve IGOD sarmalayıcı aynı dönüşüm).
+    if (t == "Checkbox" || t == "RadioButton") return SIZECAP_FULL;
     if (t == "ProgressBar" || t == "PlotLines" || t == "PlotHistogram" ||
-        t == "InputTextMultiline" || t == "ListBox" ||
+        t == "InputTextMultiline" || t == "TextBoxMultiline" || t == "ListBox" ||
+        t == "Separator" || t == "TabBar" ||
         t == "Panel" || t == "ChildWindow" || t == "GroupBox")
                                  return SIZECAP_FULL;
+    // HATA DÜZELTİLDİ (5. tur: "tabbar/labeltext/text/bullettext/seperator
+    // benzeri nesnelerde aynı sorun"): tüm metin/başlık ailesi artık W ile
+    // boyutlanır (wrap / sağa hizalı değer / kısaltma / child-clip).
     if (t == "Combo" || t == "SliderFloat" || t == "SliderInt" ||
-        t == "DragFloat" || t == "DragInt" || t == "InputText" ||
-        t == "InputInt" || t == "InputFloat" || t == "Table")
-                                 return SIZECAP_W;      // SetNextItemWidth / outer_size.x
+        t == "DragFloat" || t == "DragInt" || t == "InputText" || t == "TextBox" ||
+        t == "InputInt" || t == "InputFloat" || t == "Table" ||
+        t == "Text" || t == "TextColored" || t == "BulletText" || t == "LabelText" ||
+        t == "SeparatorText" || t == "CollapsingHeader" || t == "TreeNode")
+                                 return SIZECAP_W;      // SetNextItemWidth / wrap / clip
     if (t == "ColorEdit4")       return c->GetB("AlphaPreview") ? SIZECAP_W : SIZECAP_AUTO; // NoInputs kare içerik ölçer
-    return SIZECAP_AUTO;   // Checkbox, RadioButton, Text*, Separator*, CollapsingHeader, TreeNode, TabBar...
+    return SIZECAP_AUTO;   // Popup (görsel değil), Menu, Timer, FontRef...
 }
 
 // --- isim / ekleme ---------------------------------------------------------

@@ -1,3 +1,0 @@
-Debug##Default pos=(60,60) size=(400,400) active=1 hidden=0 skip=0 flags=0000
-Ana Form pos=(230,170) size=(480,360) active=1 hidden=0 skip=0 flags=013a
-İkinci Form pos=(290,230) size=(360,240) active=1 hidden=0 skip=0 flags=013a

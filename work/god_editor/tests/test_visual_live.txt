@@ -1,0 +1,27 @@
+# görsel yakalama için uzun süre açık kalan oturum
+snap off
+wait 20
+form 760 620
+add TabBar 30 30
+set tabBar1 Width 300
+set tabBar1 Height 150
+add LabelText 30 220
+set labelText1 Width 180
+add Text 30 260
+set text1 Text "Bu oldukça uzun bir metin ve kaydırma genişliğinde kırılmalı"
+set text1 Width 140
+add Checkbox 240 260
+set checkbox1 Width 200
+set checkbox1 Height 34
+add Separator 240 320
+set separator1 Width 260
+set separator1 Height 8
+add TextBox 240 360
+set textBox1 Width 220
+add BulletText 240 400
+set bulletText1 Width 150
+add Button 30 460
+add GroupBox 30 500
+select checkbox1
+wait 100000
+quit

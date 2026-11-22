@@ -60,6 +60,9 @@ static ImVec2 s_formPos, s_formSize;        // çizilen formun gerçek dikdörtg
 static std::map<const Ctrl*, std::string> s_textBufs;
 static std::map<const Ctrl*, std::string> s_lastVal;    // Value senkron izi (dosya kapsamında — silinince temizlenir)
 
+// aktif sekme başlığı (TabBar yerleştirmesinde TabOwner için)
+static std::map<const Ctrl*, std::string> s_tabActiveOwner;
+
 // sağ tık bağlam menüsü durumu (nesne / form menüleri)
 static bool   s_ctxRequest = false;     // bu karede menü açma isteği
 static Ctrl*  s_ctxTarget = nullptr;   // menü hedefi (null → form/canvas menüsü)
@@ -133,6 +136,15 @@ static void PushRect(Ctrl* c, bool tray = false) {
         if (rh > 0 && rh != c->h) { c->h = rh; SyncSizeProps(c, c->w, rh); }  // yükseklik ImGui sabiti
     }
 }
+// hit dikdörtgenini en az w genişliğe büyüt (tutamaçla genişletilen "alan"
+// tipleri: Checkbox/RadioButton/BulletText — WinForms'taki gibi kontrol
+// alanı w'dir; görsel içerik sol tarafta kalır)
+static void PushRectMinWidth(Ctrl* c, int minW) {
+    if (s_hitRects.empty() || s_hitRects.back().c != c) return;
+    ImVec2& rmax = s_hitRects.back().rmax;
+    float want = s_hitRects.back().rmin.x + (float)(minW > 0 ? minW : 0);
+    if (rmax.x < want) rmax.x = want;
+}
 // güvenli: widget çizilmediyse (0 boyut vb.) sağlam bir dikdörtgen kaydet
 static void PushRectFallback(Ctrl* c) {
     WidgetRect r; r.c = c;
@@ -146,6 +158,26 @@ static void PushRectFallback(Ctrl* c) {
 static std::string WLabel(const Ctrl* c, const char* textProp, const char* defText) {
     std::string t = c->Get(textProp, defText);
     return t + "##" + c->name;
+}
+
+// etiketi avail genişliğine sığdır — taşarsa "…" ile kısalt (UTF-8 güvenli).
+// Üretilen IGOD:: yardımcıları AYNI algoritmayı kullanır (WYSIWYG).
+static std::string FitLabelW(const std::string& text, float avail) {
+    if (avail <= 8.0f) return text;
+    if (ImGui::CalcTextSize(text.c_str(), nullptr, true).x <= avail) return text;
+    const std::string ell = "...";
+    float budget = avail - ImGui::CalcTextSize(ell.c_str()).x;
+    size_t i = 0;
+    while (i < text.size()) {
+        size_t len = 1;
+        unsigned char ch = (unsigned char)text[i];
+        if (ch >= 0xF0) len = 4; else if (ch >= 0xE0) len = 3; else if (ch >= 0xC0) len = 2;
+        if (ImGui::CalcTextSize(text.c_str(), text.c_str() + i + len, true).x > budget) break;
+        i += len;
+    }
+    std::string out = text.substr(0, i);
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out + ell;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,16 +197,37 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         if (c->GetB("Small")) ImGui::SmallButton(WLabel(c, "Text", "Buton").c_str());
         else ImGui::Button(WLabel(c, "Text", "Buton").c_str(), sz);
         PushRect(c);
-    } else if (t == "Checkbox") {
-        bool v = c->GetB("Checked");
+    } else if (t == "Checkbox" || t == "RadioButton") {
+        // BOYUT UYGULA (W+H — kullanıcı: "büyütüp küçültemiyorum"): yükseklik
+        // FramePadding ölçeklemesiyle KAREYİ ve satırı büyütür; genişlik etiketi
+        // sığdırır (kısaltır) ve kontrol alanını genişletir. Üretilen IGOD
+        // sarmalayıcıları AYNI dönüşümü uygular (WYSIWYG).
+        bool isCheck = (t == "Checkbox");
+        bool v = isCheck ? c->GetB("Checked") : c->GetB("Active");
+        std::string lbl = WLabel(c, "Text", isCheck ? "Seçenek" : "Seçim");
+        size_t hashPos = lbl.find("##");
+        std::string visible = lbl.substr(0, hashPos);
+        std::string idSfx = lbl.substr(hashPos);
+        bool padPush = false;
+        if (c->h > 0) {
+            float fh = ImGui::GetFontSize();
+            float padY = (c->h - fh) * 0.5f;
+            if (padY >= 0.0f) {
+                ImVec2 fp = ImGui::GetStyle().FramePadding;
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(fp.x, padY));
+                padPush = true;
+            }
+        }
+        float square = ImGui::GetFrameHeight();
+        std::string shown = visible;
+        if (c->w > 0)
+            shown = FitLabelW(visible, (float)c->w - square - ImGui::GetStyle().FramePadding.x * 2.0f);
         ImGui::SetCursorPos(pos);
-        ImGui::Checkbox(WLabel(c, "Text", "Seçenek").c_str(), &v);
+        if (isCheck) ImGui::Checkbox((shown + idSfx).c_str(), &v);
+        else         ImGui::RadioButton((shown + idSfx).c_str(), &v);
+        if (padPush) ImGui::PopStyleVar();
         PushRect(c);
-    } else if (t == "RadioButton") {
-        bool v = c->GetB("Active");
-        ImGui::SetCursorPos(pos);
-        ImGui::RadioButton(WLabel(c, "Text", "Seçim").c_str(), &v);
-        PushRect(c);
+        PushRectMinWidth(c, c->w);
     } else if (t == "SliderFloat" || t == "SliderInt") {
         float fv = (float)atof(c->Get("Value", "0").c_str());
         int   iv = atoi(c->Get("Value", "0").c_str());
@@ -196,7 +249,7 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         if (t == "DragFloat") ImGui::DragFloat(WLabel(c, "Text", "Değer").c_str(), &fv, (float)atof(c->Get("Speed", "1").c_str()), mn, mx);
         else ImGui::DragInt(WLabel(c, "Text", "Değer").c_str(), &iv, (float)atof(c->Get("Speed", "1").c_str()), (int)mn, (int)mx);
         PushRect(c);
-    } else if (t == "InputText" || t == "InputTextMultiline") {
+    } else if (t == "InputText" || t == "InputTextMultiline" || t == "TextBox" || t == "TextBoxMultiline") {
         // her nesnenin KALICI kendi tamponu (Value'dan başlatılır)
         std::string& buf = s_textBufs[c];
         std::string curVal = c->Get("Value", "");
@@ -210,7 +263,7 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         ImGuiInputTextFlags fl = ImGuiInputTextFlags_ReadOnly;
         if (c->GetB("Password")) fl |= ImGuiInputTextFlags_Password;
         ImGui::SetCursorPos(pos);
-        if (t == "InputText") {
+        if (t == "InputText" || t == "TextBox") {
             if (c->w > 0) ImGui::SetNextItemWidth((float)c->w);   // BOYUT UYGULA (W)
             ImGui::InputText(WLabel(c, "Text", "Yazı").c_str(), &buf[0], (int)buf.size(), fl);
         }
@@ -272,29 +325,73 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         ImGui::ProgressBar((float)atof(c->Get("Value", "0.5").c_str()), sz, ov[0] ? ov : nullptr);
         PushRect(c);
     } else if (t == "Separator") {
+        // BOYUT UYGULA (W+H — kullanıcı: "seperator boyutu ince çubuk, büyütüp
+        // küçültemiyorum"): gerçek boyutlandırılabilir ayraç = W×H dolgu çubuğu,
+        // ImGuiCol_Separator rengiyle (SeparatorColor özelliği objstyle'den
+        // push edilmiş durumda). Üretilen IGOD::Separator AYNISINI çizer.
+        ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "200").c_str())),
+                  (float)(c->h ? c->h : atoi(c->Get("Height", "2").c_str())));
         ImGui::SetCursorPos(pos);
-        ImGui::Separator();
+        ImGui::Dummy(sz);
+        ImDrawList* dlSep = ImGui::GetWindowDrawList();
+        dlSep->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                             ImGui::GetColorU32(ImGuiCol_Separator));
         PushRect(c);
     } else if (t == "SeparatorText") {
+        // BOYUT UYGULA (W): ImGui::SeparatorText mevcut pencere genişliğine
+        // yayılır → w'lik sıfır-dolgu child'ına alınır: çizgi w'ye kadar çizilir
+        // (üretim IGOD::SeparatorText AYNISINI yapar).
         ImGui::SetCursorPos(pos);
-        ImGui::SeparatorText(WLabel(c, "Text", "Bölüm").c_str());
+        if (c->w > 0) {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::BeginChild((c->name + "_stw").c_str(), ImVec2((float)c->w, 0.0f), ImGuiChildFlags_AutoResizeY);
+            ImGui::SeparatorText(WLabel(c, "Text", "Bölüm").c_str());
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+        } else {
+            ImGui::SeparatorText(WLabel(c, "Text", "Bölüm").c_str());
+        }
         PushRect(c);
     } else if (t == "Text" || t == "TextColored" || t == "BulletText" || t == "LabelText") {
         std::string lbl = WLabel(c, "Text", "Etiket");
+        size_t hashPos = lbl.find("##");
+        std::string visible = lbl.substr(0, hashPos);
+        std::string idSfx = lbl.substr(hashPos);
         ImGui::SetCursorPos(pos);
-        if (t == "Text") {
-            if (c->GetB("Wrapped")) ImGui::TextWrapped("%s", lbl.substr(0, lbl.find("##")).c_str());
-            else ImGui::Text("%s", lbl.substr(0, lbl.find("##")).c_str());
+        if (t == "LabelText") {
+            // BOYUT UYGULA (W — kullanıcı: "labeltext'in boyutunu kısaltamıyorum"):
+            // LabelText değeri öğe genişliğinin SAĞ ucunda hizalar (CalcItemWidth);
+            // SetNextItemWidth ile tasarım genişliği birebir geçer. Üretilen kod
+            // aynı çağrıyı yazar (WYSIWYG).
+            if (c->w > 0) ImGui::SetNextItemWidth((float)c->w);
+            ImGui::LabelText(lbl.c_str(), "%s", c->Get("Value", "değer").c_str());
+            PushRect(c);
+        } else {
+            // BOYUT UYGULA (W): metin w'de kayar. DİKKAT: PushTextWrapPos değeri
+            // PENCERE-YEREL (1.91: CalcWrapWidthForPos → wrap_pos + WinPos - Scroll):
+            // öğe imleç x'i + w. Üretilen kod aynı sabiti yazar (WYSIWYG).
+            bool wrap = (c->w > 0) && t != "BulletText";
+            if (wrap) ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + (float)c->w);
+            if (t == "Text") {
+                if (c->GetB("Wrapped") && !wrap) ImGui::TextWrapped("%s", visible.c_str());
+                else ImGui::Text("%s", visible.c_str());
+            }
+            else if (t == "TextColored") {
+                ImVec4 col(atof(c->Get("R", "255").c_str()) / 255.0f,
+                            atof(c->Get("G", "200").c_str()) / 255.0f,
+                            atof(c->Get("B", "80").c_str()) / 255.0f, 1.0f);
+                ImGui::TextColored(col, "%s", visible.c_str());
+            }
+            else {
+                std::string shown = visible;
+                if (c->w > 0)
+                    shown = FitLabelW(visible, (float)c->w - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f));
+                ImGui::BulletText("%s", shown.c_str());
+            }
+            if (wrap) ImGui::PopTextWrapPos();
+            PushRect(c);
+            if (t == "BulletText") PushRectMinWidth(c, c->w);
         }
-        else if (t == "TextColored") {
-            ImVec4 col(atof(c->Get("R", "255").c_str()) / 255.0f,
-                        atof(c->Get("G", "200").c_str()) / 255.0f,
-                        atof(c->Get("B", "80").c_str()) / 255.0f, 1.0f);
-            ImGui::TextColored(col, "%s", lbl.substr(0, lbl.find("##")).c_str());
-        }
-        else if (t == "BulletText") ImGui::BulletText("%s", lbl.substr(0, lbl.find("##")).c_str());
-        else ImGui::LabelText(lbl.c_str(), "%s", c->Get("Value", "değer").c_str());
-        PushRect(c);
     } else if (t == "PlotLines" || t == "PlotHistogram") {
         ImGui::SetCursorPos(pos);
         std::vector<float> data;
@@ -349,8 +446,15 @@ static void DrawCtrl(Ctrl* c, Model& m) {
         dl->AddText(lp, ImGui::GetColorU32(ImGuiCol_Text), txt.c_str());
         PushRect(c);
     } else if (t == "CollapsingHeader" || t == "TreeNode") {
+        // BOYUT UYGULA (W): başlık mevcut genişliğe yayılır → w'lik sıfır-dolgu
+        // child'ına alınır (üretim IGOD::CollapsingHeader/TreeNode aynı).
         ImGui::SetCursorPos(pos);
         ImGuiTreeNodeFlags fl = c->GetB("DefaultOpen") ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+        bool wrapped = c->w > 0;
+        if (wrapped) {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::BeginChild((c->name + "_hcw").c_str(), ImVec2((float)c->w, 0.0f), ImGuiChildFlags_AutoResizeY);
+        }
         bool open = (t == "CollapsingHeader") ? ImGui::CollapsingHeader(WLabel(c, "Text", "Başlık").c_str(), fl)
                                               : ImGui::TreeNodeEx(WLabel(c, "Text", "Düğüm").c_str(), fl);
         PushRect(c);   // rect = başlığın kendisi (çocuklar çizilmeden ÖNCE al)
@@ -358,13 +462,22 @@ static void DrawCtrl(Ctrl* c, Model& m) {
             for (Ctrl* ch : m.ChildrenOf(c)) DrawCtrl(ch, m);
             if (t == "TreeNode") ImGui::TreePop();
         }
+        if (wrapped) { ImGui::EndChild(); ImGui::PopStyleVar(); }
     } else if (t == "TabBar") {
+        // BOYUT UYGULA (W+H — kullanıcı: "tabbar boyutunu küçültüp
+        // büyültemiyorum"): sekmeler W×H'lik sıfır-dolgu child bölgesine çizilir —
+        // genişlik VE yükseklik tasarım boyutu. Üretilen IGOD::TabBar AYNI
+        // sarmalamayı yapar (WYSIWYG).
+        ImVec2 sz((float)(c->w ? c->w : atoi(c->Get("Width", "400").c_str())),
+                  (float)(c->h ? c->h : atoi(c->Get("Height", "220").c_str())));
         ImGui::SetCursorPos(pos);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::BeginChild((c->name + "_tbw").c_str(), sz, ImGuiChildFlags_None);
         if (ImGui::BeginTabBar(c->name.c_str(), ImGuiTabBarFlags_None)) {
-            PushRect(c);   // rect = sekme çubuğu (sekme öğeleri çizilmeden ÖNCE al)
             for (auto& s : SplitW(Utf8ToWideStr(c->Get("Items", "Genel|Ayarlar")), L'|')) {
                 std::string title = WideStrToUtf8(s);
                 if (ImGui::BeginTabItem(title.c_str())) {
+                    s_tabActiveOwner[c] = title;   // aktif sekme (yerleştirme TabOwner için)
                     for (Ctrl* ch : m.ChildrenOf(c)) {
                         if (ch->Get("TabOwner", "") == title) DrawCtrl(ch, m);
                     }
@@ -372,9 +485,10 @@ static void DrawCtrl(Ctrl* c, Model& m) {
                 }
             }
             ImGui::EndTabBar();
-        } else {
-            PushRectFallback(c);
         }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        PushRect(c);   // rect = tüm W×H bölge (konteyner davranışı — Panel gibi)
     } else if (t == "Table") {
         ImGui::SetCursorPos(pos);
         int cols = atoi(c->Get("Columns", "3").c_str());
@@ -404,14 +518,31 @@ static void DrawCtrl(Ctrl* c, Model& m) {
 }
 
 // ---------------------------------------------------------------------------
-//  tıklama noktasındaki üstteki nesne (tray dahil değil)
+//  tıklama noktasındaki nesne (tray dahil değil)
+//  HATA DÜZELTİLDİ (kullanıcı: "groupbox/panel içine obje koyamıyorum"): eski
+//  HitUnder kayıt sırasına göre SON kaydedilen dikdörtgeni (konteyneri!)
+//  öne alıyordu — konteyner kendi çocu­klarından SONRA kaydedildiği için
+//  PANEL İÇİNDEKİ NESNEYİ TIKLAMAK paneli seçiyordu; çocuk seçilemez,
+//  taşınamaz, boyutlanamaz oluyordu. Artık "EN DERİN" (parent zinciri en
+//  uzun) nesne kazanır; eşit derinlikte geç çizilen (üstteki) kazanır.
+static int DepthOf(const Ctrl* c) {
+    int d = 0;
+    for (Ctrl* p = c->parent; p; p = p->parent) d++;
+    return d;
+}
+static bool PtInRect(ImVec2 pt, ImVec2 rmin, ImVec2 rmax) {
+    return pt.x >= rmin.x && pt.x <= rmax.x && pt.y >= rmin.y && pt.y <= rmax.y;
+}
 static WidgetRect* HitUnder(ImVec2 pt) {
-    for (int i = (int)s_hitRects.size() - 1; i >= 0; i--) {
-        WidgetRect& r = s_hitRects[i];
+    WidgetRect* best = nullptr;
+    int bestDepth = -1;
+    for (auto& r : s_hitRects) {
         if (r.tray) continue;
-        if (pt.x >= r.rmin.x && pt.x <= r.rmax.x && pt.y >= r.rmin.y && pt.y <= r.rmax.y) return &r;
+        if (!PtInRect(pt, r.rmin, r.rmax)) continue;
+        int d = DepthOf(r.c);
+        if (d >= bestDepth) { best = &r; bestDepth = d; }   // eşitse geç çizilen (üstte)
     }
-    return nullptr;
+    return best;
 }
 void ClickSelectUnder(ImVec2 pt, bool additive) {
     WidgetRect* r = HitUnder(pt);
@@ -493,9 +624,11 @@ static void ApplyHandle(Ctrl* c, int handle, ImVec2 d) {
     if (handle == 0 || handle == 1 || handle == 2) { nh = s_origH - (int)d.y; ny = s_origY + (int)d.y; }
     if (handle == 2 || handle == 3 || handle == 4) nw = s_origW + (int)d.x;
     if (handle == 4 || handle == 5 || handle == 6) nh = s_origH + (int)d.y;
-    // tip farkındalı minimumlar: genişliği ayarlanabilen tipte çok dar kutu anlamsız
+    // tip farkındalı minimumlar: Separator ince çizgi olabilir (2px); diğer
+    // FULL tiplerde anlamsız küçük kutu engellenir
+    int minH = (c->type == "Separator") ? 2 : 8;
     nw = ImMax(nw, cap == SIZECAP_FULL ? 12 : 24);
-    if (cap == SIZECAP_FULL) nh = ImMax(nh, 8);
+    if (cap == SIZECAP_FULL) nh = ImMax(nh, minH);
     if (g_snapEnabled) {
         nx = (nx + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
         ny = (ny + GRID_SIZE / 2) / GRID_SIZE * GRID_SIZE;
@@ -579,9 +712,9 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav);
         ImGui::PopStyleVar(2);
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(rectMin, rectMax, IM_COL32(38, 40, 48, 255));
+        dl->AddRectFilled(rectMin, rectMax, IM_COL32(41, 41, 43, 255));   // nötr gri (mavimsi ton kaldırıldı)
         if (g_gridVisible) {
-            ImU32 dot = IM_COL32(90, 94, 110, 200);
+            ImU32 dot = IM_COL32(94, 94, 98, 200);
             for (float x = rectMin.x; x < rectMax.x; x += GRID_SIZE)
                 for (float y = rectMin.y; y < rectMax.y; y += GRID_SIZE)
                     dl->AddCircleFilled(ImVec2(x, y), 0.7f, dot, 4);
@@ -685,14 +818,14 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
         ImDrawList* dl = ImGui::GetForegroundDrawList();
         float trayY = s_formPos.y + s_formSize.y + 14.0f;
         float trayX = s_formPos.x;
-        dl->AddRectFilled(ImVec2(trayX, trayY), ImVec2(trayX + m.formW, trayY + 26), IM_COL32(33, 35, 42, 255), 3.0f);
+        dl->AddRectFilled(ImVec2(trayX, trayY), ImVec2(trayX + m.formW, trayY + 26), IM_COL32(34, 34, 36, 255), 3.0f);
         dl->AddText(ImVec2(trayX + 6, trayY + 6), IM_COL32(150, 152, 160, 255), "Bile\305\237enler:");
         float cx = trayX + 90;
         for (Ctrl* c : m.ctrls) {
             if (c->type == "Timer" || c->type == "FontRef" || c->type == "Popup") {
                 std::string lbl = "[ " + c->name + " ]";
                 ImVec2 ts = ImGui::CalcTextSize(lbl.c_str());
-                dl->AddRectFilled(ImVec2(cx, trayY + 3), ImVec2(cx + ts.x + 10, trayY + 23), IM_COL32(55, 58, 68, 255), 3.0f);
+                dl->AddRectFilled(ImVec2(cx, trayY + 3), ImVec2(cx + ts.x + 10, trayY + 23), IM_COL32(56, 56, 58, 255), 3.0f);
                 dl->AddText(ImVec2(cx + 5, trayY + 6), IM_COL32(200, 202, 210, 255), lbl.c_str());
                 WidgetRect r; r.c = c;
                 r.rmin = ImVec2(cx, trayY + 3); r.rmax = ImVec2(cx + ts.x + 10, trayY + 23);
@@ -714,18 +847,17 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
         bool inForm = mp.x >= s_formPos.x && mp.x <= s_formPos.x + s_formSize.x &&
                       mp.y >= s_formPos.y && mp.y <= s_formPos.y + s_formSize.y;
         if (ImGui::IsMouseClicked(0) && inForm && !io.WantTextInput) {
-            // içerideki konteyneri bul (en üstteki)
+            // içerideki konteyneri bul — EN DERİN olan (iç içe panellerde en
+            // içteki kazanır; eski kod kayıt sırasına göre DIŞ kabuğu seçiyordu)
             Ctrl* parent = nullptr;
             ImVec2 rmin, rmax;
-            for (int i = (int)s_hitRects.size() - 1; i >= 0; i--) {
-                Ctrl* cc = s_hitRects[i].c;
-                if (IsContainerType(cc->type) && !cc->nonVisual) {
-                    WidgetRect& r = s_hitRects[i];
-                    if (mp.x >= r.rmin.x && mp.x <= r.rmax.x && mp.y >= r.rmin.y && mp.y <= r.rmax.y) {
-                        parent = cc;
-                        rmin = r.rmin; rmax = r.rmax;
-                        break;
-                    }
+            int parentDepth = -1;
+            for (auto& r : s_hitRects) {
+                Ctrl* cc = r.c;
+                if (r.tray || !IsContainerType(cc->type) || cc->nonVisual) continue;
+                if (PtInRect(mp, r.rmin, r.rmax)) {
+                    int d = DepthOf(cc);
+                    if (d > parentDepth) { parent = cc; rmin = r.rmin; rmax = r.rmax; parentDepth = d; }
                 }
             }
             int px, py;
@@ -734,6 +866,13 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
             if (g_snapEnabled) { px = px / GRID_SIZE * GRID_SIZE; py = py / GRID_SIZE * GRID_SIZE; }
             Ctrl* added = g_model.Add(g_armTool, px, py, parent);
             if (added) {
+                // TabBar içine yerleştirme → TabOwner = o anki AKTİF sekme başlığı
+                // (eskiden TabOwner atanmazdı → nesne HİÇBİR sekmede görünmezdi)
+                if (parent && parent->type == "TabBar") {
+                    auto it = s_tabActiveOwner.find(parent);
+                    if (it != s_tabActiveOwner.end() && added->Get("TabOwner", "").empty())
+                        added->Set("TabOwner", it->second);
+                }
                 // HATA DÜZELTİLDİ (sınırsız oluşturma): M2God/VS tasarımcı davranışı —
                 // TEK yerleştirme sonrası araç seçimi (arm) KALKAR. Artık her tıkta
                 // yeni nesne oluşmaz; yeni nesne için araç kutusundan yeniden seçilir.
@@ -832,9 +971,14 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
                 }
                 s_dragStart = mp;
             }
-        } else if (s_hostHovered && mp.x >= rectMin.x && mp.x <= rectMax.x && mp.y >= rectMin.y && mp.y <= rectMax.y) {
+        } else if (PtInRect(mp, rectMin, rectMax)) {
             // form gövdesi VEYA canvas boşluğu → rubber band başlat.
-            // (M2God: formda basılı tutup sürükleyerek toplu seçim; tek tık = form seçimi)
+            // HATA DÜZELTİLDİ (kullanıcı: "formun boş alanına tıklayınca formu
+            // seçmiyor, ESC'yle seçiyor"): eski koşul s_hostHovered (canvas host
+            // penceresinin hover'ı) istiyordu — tasarım formu host'un ÜSTÜNDE
+            // çizildiğinden form üzerinde hover hep false'tu; tık hiç yakalanmıyor,
+            // form seçilmiyordu. Artık nokta canvas dikdörtgeni içindeyse (form
+            // dahil) yakalanır: tek tık = form seçimi, sürükleme = toplu seçim.
             s_band = true;
             s_bandStart = mp;
             s_bandCur = mp;
@@ -1024,7 +1168,7 @@ void Draw(const ImVec2& rectMin, const ImVec2& rectMax) {
     }
 
     // canvas çerçevesi
-    fg->AddRect(rectMin, rectMax, IM_COL32(20, 22, 28, 255), 0.0f, 0, 1.0f);
+    fg->AddRect(rectMin, rectMax, IM_COL32(22, 22, 24, 255), 0.0f, 0, 1.0f);
     (void)haveFormRect;
 }
 

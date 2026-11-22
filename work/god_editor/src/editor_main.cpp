@@ -312,6 +312,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR cmdLine, int nShow) {
     }
 
     theme::Apply(theme::TImGuiDark);
+    theme::ApplyChrome();   // 5. tur: editör kabuğu vurguları nötr gri (mavi şikayeti) — canvas etkilenmez
 
     if (!selftestPath.empty()) ui_editor::SetSelftest(WideStrToUtf8(selftestPath));
     if (!openPath.empty()) ui_editor::SetPendingOpen(WideStrToUtf8(openPath));
@@ -346,14 +347,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR cmdLine, int nShow) {
         ui_editor::Draw(g_es.welcome ? nullptr : &g_es, io);
 
         ImGui::Render();
-        const float clear[] = { 0.07f, 0.075f, 0.10f, 1.00f };
+        const float clear[] = { 0.07f, 0.07f, 0.07f, 1.00f };   // nötr koyu gri (mavimsi ton yok)
         switch (g_es.editorBackend) {
         case (int)EditorBackend::DX11:
             s_ctx11->OMSetRenderTargets(1, &s_rtv11, nullptr);
             s_ctx11->ClearRenderTargetView(s_rtv11, clear);
             break;
         case (int)EditorBackend::DX9:
-            s_dev9->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_XRGB(18, 19, 26), 1.0f, 0);
+            s_dev9->Clear(0, nullptr, D3DCLEAR_TARGET, D3DCOLOR_XRGB(18, 18, 18), 1.0f, 0);
             break;
         case (int)EditorBackend::DX10:
             s_dev10->OMSetRenderTargets(1, &s_rtv10, nullptr);
@@ -361,7 +362,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR cmdLine, int nShow) {
             break;
         case (int)EditorBackend::OPENGL3:
             glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
-            glClearColor(0.07f, 0.075f, 0.10f, 1.00f);
+            glClearColor(0.07f, 0.07f, 0.07f, 1.00f);
             glClear(GL_COLOR_BUFFER_BIT);
             break;
         }

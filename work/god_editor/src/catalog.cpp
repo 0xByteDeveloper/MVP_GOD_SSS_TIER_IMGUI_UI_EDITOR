@@ -129,7 +129,7 @@ void Catalog::LoadBuiltin() {
       d.events = { E("ValueChanged","Değer sürüklenince") };
       elements["DragInt"] = d; }
     { ElementDef d; d.name = "InputText"; d.cppApi = "ImGui::InputText"; d.kind = "control"; d.catTr = "Ortak";
-      d.defaultEvent = "TextChanged"; d.defW = 200; d.defH = 0;
+      d.defaultEvent = "TextChanged"; d.defW = 200; d.defH = 0; d.toolboxVisible = false;   // araç kutusunda "TextBox" adıyla (M2God sözlüğü)
       d.props = { P("Text","string","Görünüm","Yazı"), P("Value","string","Veri",""),
                   P("Hint","string","Görünüm","","","Boşken soluk ipucu"),
                   P("Password","bool","Davranış","False","","Yıldız maskesi"),
@@ -142,8 +142,24 @@ void Catalog::LoadBuiltin() {
       AddStyleProps(d.props);
       d.events = { E("TextChanged","Yazı değişince"), E("EnterPressed","Enter'a basılınca") };
       elements["InputText"] = d; }
+    { ElementDef d; d.name = "TextBox"; d.cppApi = "ImGui::InputText"; d.kind = "control"; d.catTr = "Ortak";
+      // KULLANICI TALEBİ: "textbox yok" — M2God/WinForms sözlüğüyle araç kutusunda
+      // TextBox (tek satır metin girişi; kod üretiminde ImGui::InputText).
+      d.defaultEvent = "TextChanged"; d.defW = 200; d.defH = 0;
+      d.props = { P("Text","string","Görünüm","Yazı"), P("Value","string","Veri",""),
+                  P("Hint","string","Görünüm","","","Boşken soluk ipucu"),
+                  P("Password","bool","Davranış","False","","Yıldız maskesi"),
+                  P("ReadOnly","bool","Davranış","False","","Salt okunur"),
+                  P("Width","int","Yerleşim","200") };
+      AddTextColors(d.props);
+      d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
+      d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
+      d.props.push_back(P("FrameActiveColor","color","Renk","","","Odaktayken zemin"));
+      AddStyleProps(d.props);
+      d.events = { E("TextChanged","Yazı değişince"), E("EnterPressed","Enter'a basılınca") };
+      elements["TextBox"] = d; }
     { ElementDef d; d.name = "InputTextMultiline"; d.cppApi = "ImGui::InputTextMultiline"; d.kind = "control"; d.catTr = "Ortak";
-      d.defaultEvent = "TextChanged"; d.defW = 280; d.defH = 120;
+      d.defaultEvent = "TextChanged"; d.defW = 280; d.defH = 120; d.toolboxVisible = false;  // araç kutusunda "TextBoxMultiline"
       d.props = { P("Text","string","Görünüm","Not"), P("Value","string","Veri",""),
                   P("ReadOnly","bool","Davranış","False","","Salt okunur"),
                   P("Width","int","Yerleşim","280"), P("Height","int","Yerleşim","120") };
@@ -154,6 +170,18 @@ void Catalog::LoadBuiltin() {
       AddStyleProps(d.props);
       d.events = { E("TextChanged","Yazı değişince") };
       elements["InputTextMultiline"] = d; }
+    { ElementDef d; d.name = "TextBoxMultiline"; d.cppApi = "ImGui::InputTextMultiline"; d.kind = "control"; d.catTr = "Ortak";
+      d.defaultEvent = "TextChanged"; d.defW = 280; d.defH = 120;
+      d.props = { P("Text","string","Görünüm","Not"), P("Value","string","Veri",""),
+                  P("ReadOnly","bool","Davranış","False","","Salt okunur"),
+                  P("Width","int","Yerleşim","280"), P("Height","int","Yerleşim","120") };
+      AddTextColors(d.props);
+      d.props.push_back(P("FrameBgColor","color","Renk","","","Giriş zemini"));
+      d.props.push_back(P("FrameHoverColor","color","Renk","","","Üzerindeyken zemin"));
+      d.props.push_back(P("FrameActiveColor","color","Renk","","","Odaktayken zemin"));
+      AddStyleProps(d.props);
+      d.events = { E("TextChanged","Yazı değişince") };
+      elements["TextBoxMultiline"] = d; }
     { ElementDef d; d.name = "InputInt"; d.cppApi = "ImGui::InputInt"; d.kind = "control"; d.catTr = "Ortak";
       d.defaultEvent = "ValueChanged"; d.defW = 160; d.defH = 0;
       d.props = { P("Text","string","Görünüm","Sayı"), P("Value","int","Veri","0"), P("Step","int","Veri","1") };
@@ -211,16 +239,19 @@ void Catalog::LoadBuiltin() {
       AddStyleProps(d.props);
       d.events = { E("Hovered","Fare üstüne gelince") };
       elements["ProgressBar"] = d; }
-    { ElementDef d; d.name = "Separator"; d.cppApi = "ImGui::Separator"; d.kind = "control"; d.catTr = "Ortak";
-      d.defaultEvent = ""; d.defW = 400; d.defH = 8;
-      d.props = { P("Width","int","Yerleşim","400") };
-      d.props.push_back(P("SeparatorColor","color","Renk","","","Çizgi rengi"));
+    { ElementDef d; d.name = "Separator"; d.cppApi = "IGOD::Separator"; d.kind = "control"; d.catTr = "Ortak";
+      d.defaultEvent = ""; d.defW = 200; d.defH = 2;
+      // KULLANICI TALEBİ: "seperator ince çubuk gibi, büyütüp küçültemiyorum" —
+      // artık GERÇEK boyutlandırılabilir ayraç (W×H dolgu çubuğu).
+      d.props = { P("Width","int","Yerleşim","200","","Genişlik (px)"),
+                  P("Height","int","Yerleşim","2","","Kalınlık (px)") };
+      d.props.push_back(P("SeparatorColor","color","Renk","","","Çubuk rengi"));
       AddStyleProps(d.props);
       d.events = {};
       elements["Separator"] = d; }
-    { ElementDef d; d.name = "SeparatorText"; d.cppApi = "ImGui::SeparatorText"; d.kind = "control"; d.catTr = "Ortak";
-      d.defaultEvent = ""; d.defW = 300; d.defH = 20;
-      d.props = { P("Text","string","Görünüm","Bölüm") };
+    { ElementDef d; d.name = "SeparatorText"; d.cppApi = "IGOD::SeparatorText"; d.kind = "control"; d.catTr = "Ortak";
+      d.defaultEvent = ""; d.defW = 0; d.defH = 0;
+      d.props = { P("Text","string","Görünüm","Bölüm"), P("Width","int","Yerleşim","0","","0 = mevcut genişlik") };
       AddTextColors(d.props);
       d.props.push_back(P("SeparatorColor","color","Renk","","","Çizgi rengi"));
       AddStyleProps(d.props);
@@ -228,28 +259,32 @@ void Catalog::LoadBuiltin() {
       elements["SeparatorText"] = d; }
     { ElementDef d; d.name = "Text"; d.cppApi = "ImGui::Text"; d.kind = "control"; d.catTr = "Ortak";
       d.defaultEvent = ""; d.defW = 0; d.defH = 0;
-      d.props = { P("Text","string","Görünüm","Etiket"), P("Wrapped","bool","Görünüm","False","","Satır sonunda kaydır") };
+      d.props = { P("Text","string","Görünüm","Etiket"), P("Wrapped","bool","Görünüm","False","","Satır sonunda kaydır"),
+                  P("Width","int","Yerleşim","0","","0 = içerik genişliği; >0 = bu genişlikte kaydır") };
       AddTextColors(d.props);
       AddStyleProps(d.props);
       d.events = {};
       elements["Text"] = d; }
     { ElementDef d; d.name = "TextColored"; d.cppApi = "ImGui::TextColored"; d.kind = "control"; d.catTr = "Ortak";
       d.defaultEvent = ""; d.defW = 0; d.defH = 0;
-      d.props = { P("Text","string","Görünüm","Renkli etiket"), P("R","int","Veri","255"), P("G","int","Veri","200"), P("B","int","Veri","80") };
+      d.props = { P("Text","string","Görünüm","Renkli etiket"), P("R","int","Veri","255"), P("G","int","Veri","200"), P("B","int","Veri","80"),
+                  P("Width","int","Yerleşim","0","","0 = içerik genişliği; >0 = bu genişlikte kaydır") };
       AddTextColors(d.props);
       AddStyleProps(d.props);
       d.events = {};
       elements["TextColored"] = d; }
-    { ElementDef d; d.name = "BulletText"; d.cppApi = "ImGui::BulletText"; d.kind = "control"; d.catTr = "Ortak";
+    { ElementDef d; d.name = "BulletText"; d.cppApi = "IGOD::BulletText"; d.kind = "control"; d.catTr = "Ortak";
       d.defaultEvent = ""; d.defW = 0; d.defH = 0;
-      d.props = { P("Text","string","Görünüm","Madde") };
+      d.props = { P("Text","string","Görünüm","Madde"),
+                  P("Width","int","Yerleşim","0","","0 = içerik genişliği; >0 = bu genişliğe sığdır (kısalt)") };
       AddTextColors(d.props);
       AddStyleProps(d.props);
       d.events = {};
       elements["BulletText"] = d; }
     { ElementDef d; d.name = "LabelText"; d.cppApi = "ImGui::LabelText"; d.kind = "control"; d.catTr = "Ortak";
       d.defaultEvent = ""; d.defW = 0; d.defH = 0;
-      d.props = { P("Text","string","Görünüm","Alan"), P("Value","string","Veri","değer") };
+      d.props = { P("Text","string","Görünüm","Alan"), P("Value","string","Veri","değer"),
+                  P("Width","int","Yerleşim","0","","Değer bu genişliğin sağ ucunda hizalanır") };
       AddTextColors(d.props);
       AddStyleProps(d.props);
       d.events = {};
@@ -289,14 +324,18 @@ void Catalog::LoadBuiltin() {
       elements["GroupBox"] = d; }
     { ElementDef d; d.name = "CollapsingHeader"; d.cppApi = "ImGui::CollapsingHeader"; d.kind = "container"; d.catTr = "Konteynerler";
       d.defaultEvent = ""; d.defW = 0; d.defH = 0;
-      d.props = { P("Text","string","Görünüm","Başlık"), P("DefaultOpen","bool","Davranış","True") };
+      d.props = { P("Text","string","Görünüm","Başlık"), P("DefaultOpen","bool","Davranış","True"),
+                  P("Width","int","Yerleşim","0","","0 = mevcut genişlik; >0 = bu genişlikte sınırla") };
       AddTextColors(d.props);
       AddStyleProps(d.props);
       d.events = { E("Toggled","Aç/kapa değişince") };
       elements["CollapsingHeader"] = d; }
     { ElementDef d; d.name = "TabBar"; d.cppApi = "ImGui::BeginTabBar"; d.kind = "container"; d.catTr = "Konteynerler";
       d.defaultEvent = ""; d.defW = 400; d.defH = 220;
-      d.props = { P("Text","string","Görünüm","Sekmeler"), P("Items","items","Veri","Genel|Ayarlar|Hakkında","","Sekme başlıkları | ile") };
+      // KULLANICI TALEBİ: "tabbar boyutunu küçültüp büyültemiyorum" — W×H artık
+      // tasarım boyutu (child bölge sarmalamasıyla).
+      d.props = { P("Text","string","Görünüm","Sekmeler","","Kimlik için"), P("Items","items","Veri","Genel|Ayarlar|Hakkında","","Sekme başlıkları | ile"),
+                  P("Width","int","Yerleşim","400","","Bölge genişliği"), P("Height","int","Yerleşim","220","","Bölge yüksekliği") };
       AddTextColors(d.props);
       d.props.push_back(P("TabSelectedColor","color","Renk","","","Seçili sekme zemini"));
       AddStyleProps(d.props);
@@ -304,7 +343,8 @@ void Catalog::LoadBuiltin() {
       elements["TabBar"] = d; }
     { ElementDef d; d.name = "TreeNode"; d.cppApi = "ImGui::TreeNode"; d.kind = "container"; d.catTr = "Konteynerler";
       d.defaultEvent = ""; d.defW = 0; d.defH = 0;
-      d.props = { P("Text","string","Görünüm","Düğüm"), P("DefaultOpen","bool","Davranış","False") };
+      d.props = { P("Text","string","Görünüm","Düğüm"), P("DefaultOpen","bool","Davranış","False"),
+                  P("Width","int","Yerleşim","0","","0 = mevcut genişlik; >0 = bu genişlikte sınırla") };
       AddTextColors(d.props);
       AddStyleProps(d.props);
       d.events = { E("Toggled","Aç/kapa değişince") };

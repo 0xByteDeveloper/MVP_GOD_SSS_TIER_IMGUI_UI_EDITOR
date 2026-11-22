@@ -237,10 +237,12 @@ void DrawPropsPanel(ImVec2 min, ImVec2 max) {
                     if (cap == SIZECAP_FULL) {
                         snprintf(pv, sizeof pv, "%d, %d", m.Primary()->w, m.Primary()->h);
                         std::string sz = pv;
+                        // tip farkındalı min: Separator ince çizgi olabilir (2px)
+                        int minH = (m.Primary()->type == "Separator") ? 2 : 8;
                         if (PropRow("Boyut", &sz, nullptr)) {
                             int w, h;
                             if (sscanf(sz.c_str(), "%d, %d", &w, &h) == 2) {
-                                m.Primary()->w = (w > 12 ? w : 12); m.Primary()->h = (h > 8 ? h : 8);
+                                m.Primary()->w = (w > 12 ? w : 12); m.Primary()->h = (h > minH ? h : minH);
                                 // özellik paneli ↔ Width/Height/SizeArg senkronu (tek gerçek)
                                 auto sw = m.Primary()->props.find("Width");   if (sw != m.Primary()->props.end()) sw->second = std::to_string(m.Primary()->w);
                                 auto sh = m.Primary()->props.find("Height"); if (sh != m.Primary()->props.end()) sh->second = std::to_string(m.Primary()->h);
