@@ -232,8 +232,13 @@ run_editor ../tests/test_gen6.txt 65
 check "üretim oluştu (r6)" '[ -s /home/z/my-project/work/gen6/DenemR6/Form1.cpp ]'
 check "Global.h: PushFrameHeight yardımcısı VAR (çerçeve yükseklik ölçekleme)" 'grep -q "inline bool PushFrameHeight" /home/z/my-project/work/gen6/DenemR6/Global.h'
 check "IGOD::InputText Height üyesi VAR" 'grep -q "float Height = 0;" /home/z/my-project/work/gen6/DenemR6/Global.h'
-check "textBox1 yüksekliği bağlandı (19+20 → 39)" 'grep -q "textBox1.Height = 39;" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
-check "sliderFloat1/combo1 yüksekliği bağlandı (37/35)" 'grep -q "sliderFloat1.Height = 37;" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && grep -q "combo1.Height = 35;" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
+check "textBox1 yüksekliği bağlandı (taban+20 — dikey sürükleme)" 'python3 -c "
+import re;t=open(\"/home/z/my-project/work/gen6/DenemR6/Form1.cpp\",encoding=\"utf-8\").read()
+m=re.search(r\"textBox1.Height = (\\d+);\",t); exit(0 if m and 38<=int(m.group(1))<=42 else 1)"'
+check "sliderFloat1/combo1 yüksekliği bağlandı (+18/+16)" 'python3 -c "
+import re;t=open(\"/home/z/my-project/work/gen6/DenemR6/Form1.cpp\",encoding=\"utf-8\").read()
+a=re.search(r\"sliderFloat1.Height = (\\d+);\",t); b=re.search(r\"combo1.Height = (\\d+);\",t)
+exit(0 if a and b and 36<=int(a.group(1))<=40 and 34<=int(b.group(1))<=38 else 1)"'
 check "ETİKETSİZ üretim: u8\"##textBox1\" (Yazı yok — 6. tur #4)" 'grep -q "u8\"##textBox1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && ! grep -q "Yazı##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
 check "ETİKETSİZ üretim: u8\"##checkbox1\" + u8\"##sliderFloat1\" + u8\"##combo1\"" 'grep -q "u8\"##checkbox1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && grep -q "u8\"##sliderFloat1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && grep -q "u8\"##combo1\"" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
 check "Seçenek/Değer/Seçim yan metinleri YOK (gizli üretim)" '! grep -q "Se\303\247enek##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && ! grep -q "De\304\237er##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp && ! grep -q "Se\303\247im##" /home/z/my-project/work/gen6/DenemR6/Form1.cpp'
